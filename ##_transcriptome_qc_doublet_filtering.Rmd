@@ -8,7 +8,6 @@ R markdown file for dissociated sc and snRNA-seq datasets that:
   2) runs doubletFinder
   3) generates variable gene lists for input in centroid_mapping.ipynb
   4) extracts sparse gene expression matrices for input into centroid_mapping.ipynb
-  
 
 ***Input for this analysis requires a gene x counts matrix from STAR-based alignment with NCBI RefSeq annotations for each rabies-infected dataset. Alternative annotations can be used, but steps to calculate %mitochondrial genes will fail. 
 
@@ -27,7 +26,7 @@ tutorial_sample_variable_genes.csv: top 3000 variable genes calculated for sampl
 tutorial_sample_matrix_postdf.csv: sparse matrix from sample dataset after filtering doublets with doubletFinder
 
 
-Last amended by Maddie Urbanek, !!!!!
+Last amended by Maddie Urbanek, 9/24/25
 
 ```{r setup}
 #Lockfile containing list of dependencies and their versions is available at https://github.com/MEUrbanek/centroid_mapping. This lockfile does not contain development dependencies (i.e. devtools)!
@@ -35,28 +34,15 @@ Last amended by Maddie Urbanek, !!!!!
 #Load in libraries
 library(devtools)
 library(BiocManager)
-library(DESeq2)
-library(Matrix)
 library(Seurat)
 library(SeuratObject)
 library(dplyr)
 library(patchwork)
-library(rhdf5)
-library(ggpubr)
 library(tidyverse)
 library(ggplot2)
-library(hdf5r)
-library(EnhancedVolcano)
-library(dittoSeq)
 library(sctransform)
 library(glmGamPoi)
 library(cowplot)
-library(harmony)
-library(DoubletFinder)
-library(clusterProfiler)
-library(dittoSeq)
-library(UCell)
-library(scCustomize)
 library(DoubletFinder)
 library(schard)
 
@@ -124,6 +110,15 @@ n4<-Read10X('./pipseeker_output/n4_pipseeker_filtered')
 u1<-Read10X('./pipseeker_output/u1_pipseeker_filtered')
 u2<-Read10X('./pipseeker_output/u2_pipseeker_filtered')
 
+#MS2 comparison datasets from Fall 2024:
+ms2<-Read10X('./pipseeker_output/ms2_pipseeker_filtered')
+no_ms2<-Read10X('./pipseeker_output/no_ms2_pipseeker_filtered')
+wpre<-Read10X('./pipseeker_output/ms2_wpre_pipseeker_filtered')
+
+#No G datasets
+nog1<-Read10X('./pipseeker_output/nog1_pipseeker_filtered')
+nog2<-Read10X('./pipseeker_output/nog2_pipseeker_filtered')
+
 #Create Seurat Objects
 s1<-CreateSeuratObject(counts = s1)
 s2<-CreateSeuratObject(counts = s2)
@@ -140,6 +135,11 @@ n3<-CreateSeuratObject(counts = n3)
 n4<-CreateSeuratObject(counts = n4)
 u1<-CreateSeuratObject(counts = u1)
 u2<-CreateSeuratObject(counts = u2)
+ms2<-CreateSeuratObject(counts = ms2)
+no_ms2<-CreateSeuratObject(counts = no_ms2)
+wpre<-CreateSeuratObject(counts = wpre)
+nog1<-CreateSeuratObject(counts = nog1)
+nog2<-CreateSeuratObject(counts = nog2)
 ```
 
 ```{r calculate percent mitochondrial genes for each dataset}
@@ -162,6 +162,11 @@ n3[["percent.mt"]] <- PercentageFeatureSet(n3, pattern = "^MT-")
 n4[["percent.mt"]] <- PercentageFeatureSet(n4, pattern = "^MT-")
 u1[["percent.mt"]] <- PercentageFeatureSet(u1, pattern = "^MT-")
 u2[["percent.mt"]] <- PercentageFeatureSet(u2, pattern = "^MT-")
+ms2[["percent.mt"]] <- PercentageFeatureSet(ms2, pattern = "^MT-")
+no_ms2[["percent.mt"]] <- PercentageFeatureSet(no_ms2, pattern = "^MT-")
+wpre[["percent.mt"]] <- PercentageFeatureSet(wpre, pattern = "^MT-")
+nog1[["percent.mt"]] <- PercentageFeatureSet(nog1, pattern = "^MT-")
+nog2[["percent.mt"]] <- PercentageFeatureSet(nog2, pattern = "^MT-")
 ```
 
 ```{r qc thresholding}
@@ -192,6 +197,8 @@ c1 <- subset(c1, subset = nFeature_RNA > 1000 & nCount_RNA > 1250 & percent.mt <
 c2 <- subset(c2, subset = nFeature_RNA > 1000 & nCount_RNA > 1250 & percent.mt < 5)
 c3 <- subset(c3, subset = nFeature_RNA > 1000 & nCount_RNA > 1250 & percent.mt < 5)
 c4 <- subset(c4, subset = nFeature_RNA > 1000 & nCount_RNA > 1250 & percent.mt < 5)
+nog1 <- subset(nog1, subset = nFeature_RNA > 1000 & nCount_RNA > 1250 & percent.mt < 5)
+nog2 <- subset(nog2, subset = nFeature_RNA > 1000 & nCount_RNA > 1250 & percent.mt < 5)
 
 
 n1 <- subset(n1, subset = nFeature_RNA > 300 & nCount_RNA > 500 & percent.mt < 1)
@@ -200,6 +207,10 @@ n2 <- subset(n2, subset = nFeature_RNA > 1000 & nCount_RNA > 1250 & percent.mt <
 n3 <- subset(n3, subset = nFeature_RNA > 300 & nCount_RNA > 500 & percent.mt < 1)
 #Sample n4 has lower nFeature and  to account for lower quality dataset
 n4 <- subset(n4, subset = nFeature_RNA > 250 & nCount_RNA > 500 & percent.mt < 1)
+
+ms2 <- subset(ms2, subset = nFeature_RNA > 300 & nCount_RNA > 500 & percent.mt < 1)
+no_ms2 <- subset(no_ms2, subset = nFeature_RNA > 300 & nCount_RNA > 500 & percent.mt < 1)
+wpre <- subset(wpre, subset = nFeature_RNA > 300 & nCount_RNA > 500 & percent.mt < 1)
 
 u1 <- subset(u1, subset = nFeature_RNA > 1000 & nCount_RNA > 1250 & percent.mt < 5)
 u2 <- subset(u2, subset = nFeature_RNA > 300 & nCount_RNA > 500 & percent.mt < 1)
@@ -238,6 +249,16 @@ u1 <- RenameCells(u1, 'u1')
 u1[["cellbarcode"]] <- u1@assays$RNA@cells[[1]]
 u2 <- RenameCells(u2, 'u2')
 u2[["cellbarcode"]] <- u2@assays$RNA@cells[[1]]
+nog1 <- RenameCells(nog1, 'nog1')
+nog1[["cellbarcode"]] <- nog1@assays$RNA@cells[[1]]
+nog2 <- RenameCells(nog2, 'nog2')
+nog2[["cellbarcode"]] <- nog2@assays$RNA@cells[[1]]
+ms2 <- RenameCells(ms2, 'ms2')
+ms2[["cellbarcode"]] <- ms2@assays$RNA@cells[[1]]
+no_ms2 <- RenameCells(no_ms2, 'no_ms2')
+no_ms2[["cellbarcode"]] <- no_ms2@assays$RNA@cells[[1]]
+wpre <- RenameCells(wpre, 'wpre')
+wpre[["cellbarcode"]] <- wpre@assays$RNA@cells[[1]]
 ```
 
 ```{r doublet finder}
@@ -460,6 +481,13 @@ rownames(u2_sparse)<-features
 write.csv(u2_sparse, './filtered_sparse_matrices/u2_sparse.csv')
 ```
 
+```{r extract cell barcode lists for No G and MS2 comparison datasets}
+write.csv(ms2$cellbarcode, './cellbarcode_lists/ms2.csv')
+write.csv(no_ms2$cellbarcode, './cellbarcode_lists/no_ms2.csv')
+write.csv(wpre$cellbarcode, './cellbarcode_lists/ms2_wpre.csv')
+write.csv(nog1$cellbarcode, './cellbarcode_lists/nog1.csv')
+write.csv(nog2$cellbarcode, './cellbarcode_lists/nog2.csv')
+```
 
 
 ```{r doubletFinder for additional samples}
@@ -772,4 +800,130 @@ print('Total number of doublets and singlets detected in dataset:')
 print(table(c4$doublet_finder))
 Idents(c4) <- "doublet_finder"
 c4 <- subset(c4, idents = "Singlet")
+
+
+#No G 1
+nog1 <- standard_seurat_processing(nog1)
+ElbowPlot(nog1)
+#Set dimensions to inflection point on elbow plot
+dimensions=10
+pk_sweep(nog1, dimensions)
+nog1 <- standard_clustering(nog1,dimensions)
+calculate_expected_doublets(nog1@meta.data)
+
+#Run DoubletFinder on dataset
+#Input parameters are the prepped Seurat object, significant PCs, the optimal pK value calculated above, and the threshold for doublet+singlet prediction
+#nExp can either be set based on the value calculated using calculate_expected_doublets() or using approximations based on number of cells loaded and reported multiplet rate from company
+#For example, Pip-seq predicts a multiplet rate of 5% when loading 5,000 nuclei, so for 500 cells, you'd set nExp to 25
+doublet_finder <- doubletFinder(seu = nog1, 
+                                   PCs = 1:dimensions, 
+                                   pK = optimal.pk,
+                                   nExp = nExp.poi.adj)
+metadata <- doublet_finder@meta.data
+colnames(metadata)[9] <- "doublet_finder"
+nog1<-AddMetaData(object = nog1, metadata = metadata)
+print('Total number of doublets and singlets detected in dataset:')
+print(table(nog1$doublet_finder))
+Idents(nog1) <- "doublet_finder"
+nog1 <- subset(nog1, idents = "Singlet")
+
+#No G 2
+nog2 <- standard_seurat_processing(nog2)
+ElbowPlot(nog2)
+#Set dimensions to inflection point on elbow plot
+dimensions=10
+pk_sweep(nog2, dimensions)
+nog2 <- standard_clustering(nog2,dimensions)
+calculate_expected_doublets(nog2@meta.data)
+
+#Run DoubletFinder on dataset
+#Input parameters are the prepped Seurat object, significant PCs, the optimal pK value calculated above, and the threshold for doublet+singlet prediction
+#nExp can either be set based on the value calculated using calculate_expected_doublets() or using approximations based on number of cells loaded and reported multiplet rate from company
+#For example, Pip-seq predicts a multiplet rate of 5% when loading 5,000 nuclei, so for 500 cells, you'd set nExp to 25
+doublet_finder <- doubletFinder(seu = nog2, 
+                                   PCs = 1:dimensions, 
+                                   pK = optimal.pk,
+                                   nExp = nExp.poi.adj)
+metadata <- doublet_finder@meta.data
+colnames(metadata)[9] <- "doublet_finder"
+nog2<-AddMetaData(object = nog2, metadata = metadata)
+print('Total number of doublets and singlets detected in dataset:')
+print(table(nog2$doublet_finder))
+Idents(nog2) <- "doublet_finder"
+nog2 <- subset(nog2, idents = "Singlet")
+
+#MS2
+ms2 <- standard_seurat_processing(ms2)
+ElbowPlot(ms2)
+#Set dimensions to inflection point on elbow plot
+dimensions=10
+pk_sweep(ms2, dimensions)
+ms2 <- standard_clustering(ms2,dimensions)
+calculate_expected_doublets(ms2@meta.data)
+
+#Run DoubletFinder on dataset
+#Input parameters are the prepped Seurat object, significant PCs, the optimal pK value calculated above, and the threshold for doublet+singlet prediction
+#nExp can either be set based on the value calculated using calculate_expected_doublets() or using approximations based on number of cells loaded and reported multiplet rate from company
+#For example, Pip-seq predicts a multiplet rate of 5% when loading 5,000 nuclei, so for 500 cells, you'd set nExp to 25
+doublet_finder <- doubletFinder(seu = ms2, 
+                                   PCs = 1:dimensions, 
+                                   pK = optimal.pk,
+                                   nExp = nExp.poi.adj)
+metadata <- doublet_finder@meta.data
+colnames(metadata)[9] <- "doublet_finder"
+ms2<-AddMetaData(object = ms2, metadata = metadata)
+print('Total number of doublets and singlets detected in dataset:')
+print(table(ms2$doublet_finder))
+Idents(ms2) <- "doublet_finder"
+ms2 <- subset(ms2, idents = "Singlet")
+
+#No MS2
+no_ms2 <- standard_seurat_processing(no_ms2)
+ElbowPlot(no_ms2)
+#Set dimensions to inflection point on elbow plot
+dimensions=10
+pk_sweep(no_ms2, dimensions)
+no_ms2 <- standard_clustering(no_ms2,dimensions)
+calculate_expected_doublets(no_ms2@meta.data)
+
+#Run DoubletFinder on dataset
+#Input parameters are the prepped Seurat object, significant PCs, the optimal pK value calculated above, and the threshold for doublet+singlet prediction
+#nExp can either be set based on the value calculated using calculate_expected_doublets() or using approximations based on number of cells loaded and reported multiplet rate from company
+#For example, Pip-seq predicts a multiplet rate of 5% when loading 5,000 nuclei, so for 500 cells, you'd set nExp to 25
+doublet_finder <- doubletFinder(seu = no_ms2, 
+                                   PCs = 1:dimensions, 
+                                   pK = optimal.pk,
+                                   nExp = nExp.poi.adj)
+metadata <- doublet_finder@meta.data
+colnames(metadata)[9] <- "doublet_finder"
+no_ms2<-AddMetaData(object = no_ms2, metadata = metadata)
+print('Total number of doublets and singlets detected in dataset:')
+print(table(no_ms2$doublet_finder))
+Idents(no_ms2) <- "doublet_finder"
+no_ms2 <- subset(no_ms2, idents = "Singlet")
+
+#MS2+WPRE
+wpre <- standard_seurat_processing(wpre)
+ElbowPlot(wpre)
+#Set dimensions to inflection point on elbow plot
+dimensions=10
+pk_sweep(wpre, dimensions)
+wpre <- standard_clustering(wpre,dimensions)
+calculate_expected_doublets(wpre@meta.data)
+
+#Run DoubletFinder on dataset
+#Input parameters are the prepped Seurat object, significant PCs, the optimal pK value calculated above, and the threshold for doublet+singlet prediction
+#nExp can either be set based on the value calculated using calculate_expected_doublets() or using approximations based on number of cells loaded and reported multiplet rate from company
+#For example, Pip-seq predicts a multiplet rate of 5% when loading 5,000 nuclei, so for 500 cells, you'd set nExp to 25
+doublet_finder <- doubletFinder(seu = wpre, 
+                                   PCs = 1:dimensions, 
+                                   pK = optimal.pk,
+                                   nExp = nExp.poi.adj)
+metadata <- doublet_finder@meta.data
+colnames(metadata)[9] <- "doublet_finder"
+wpre<-AddMetaData(object = wpre, metadata = metadata)
+print('Total number of doublets and singlets detected in dataset:')
+print(table(wpre$doublet_finder))
+Idents(wpre) <- "doublet_finder"
+wpre <- subset(wpre, idents = "Singlet")
 ```
