@@ -6,13 +6,10 @@ Created on Wed Oct 1 09:00:00 2025
 """
 
 
-import os
-import math
 import time
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import multiprocess as mp
 import matplotlib.pyplot as plt
 
 from pathlib import Path
@@ -67,35 +64,11 @@ def corr_2_matrix(
     return corr_matrix
 
 
-def intersect_index(
-        *args
-):
-    """Filter dataframes based on index intersection.
-
-    Parameters
-    ----------
-    *args : pd.DataFrame
-        Dataframes to filter.
-
-    Returns
-    -------
-    dfs : list[pd.DataFrame]
-        Dataframes filtered to intersection of index values.
-    g : pd.Index
-        Intersection of all indices for dataframes.
-    """
-    g = args[0].index
-    for df in args[1:]:
-        g = g.intersection(df.index)
-
-    g = g.sort_index(ascending=True)
-    dfs = [df.loc[g] for df in args]
-    return dfs, g
-
-
 def normalize_counts(
         count_matrix: pd.DataFrame,
+        counts: pd.Series = None,
         scalar: float = None,
+        norm_seq_depth: bool = True,
         gene_x_cell: bool = True,
         log: bool = True
 ):
@@ -106,9 +79,14 @@ def normalize_counts(
     count_matrix : pd.DataFrame
         One axis corresponds to identified genes. Other axis corresponds to
         sequenced cells.
+    counts : pd.Series, optional
+        Total UMI counts per cell_id (index). Useful if `count_matrix` is a
+        filtered version of a larger DataFrame.
+        Defaults to None, in which case counts are summed from `count_matrix`.
     scalar : float, optional
         Scale factor with which to adjust normalized counts.
         Defaults to None, in which case counts are not scaled.
+    norm_seq_depth : bool, optional
     gene_x_cell : bool, optional
         If True, `count_matrix` is a [gene, cell] matrix. If False,
         `count_matrix` is a [cell, gene] matrix.
@@ -117,7 +95,7 @@ def normalize_counts(
 
     Returns
     -------
-    new_count_matrix : pd.DataFrame
+    new_counts : pd.DataFrame
         `count_matrix` normalized to total UMI counts per cell and scaled.
 
     Notes
@@ -125,9 +103,13 @@ def normalize_counts(
     Genes counts for each cell are divided by the total UMIs for that cell,
     then multiplied by a scale factor.
     """
-    counts = count_matrix.sum(numeric_only=True, axis=int(not gene_x_cell))
-    new_counts = count_matrix.divide(counts, axis=int(gene_x_cell))
-    new_counts = new_counts if scalar is None else new_counts * scalar
+    new_counts = counts
+    if norm_seq_depth:
+        counts = counts if counts is not None else count_matrix.sum(
+            numeric_only=True, axis=int(not gene_x_cell))
+        new_counts = count_matrix.divide(counts, axis=int(gene_x_cell))
+        new_counts = new_counts if scalar is None else new_counts * scalar
+
     new_counts = np.log1p(new_counts) if log else new_counts
     return new_counts
 
@@ -159,7 +141,7 @@ def centroid_mapping(
     Returns
     -------
     corr_Scores : pd.DataFrame
-    type_assignment : pd.Series
+    type_assignment : pd.DataFrame
     """
     start_time = time.time()
     print(start_time)
@@ -170,9 +152,7 @@ def centroid_mapping(
             write_assignment_df, index_col=0).squeeze()
         return corr_scores, type_assignment
 
-    # filter to cells in count matrix and reference metadata
-    ref_counts = ref_counts.loc[
-        ref_counts.index.intersection(ref_metadata.index)]
+    # add cell type column
     ref_counts['type_updated'] = ref_metadata.loc[
         ref_counts.index, 'type_updated']
 
@@ -191,7 +171,8 @@ def centroid_mapping(
     corr_scores.to_csv(write_corr_scores_df)
 
     # Assign clusters based on highest value concordance (excluding any NaNs)
-    type_assignment = corr_scores.idxmax(axis='columns')
+    type_assignment = corr_scores.idxmax(axis='columns').to_frame(
+        name='celltype')
     type_assignment.to_csv(write_assignment_df)
 
     print('Done assigning cell types! :)')
@@ -201,11 +182,10 @@ def centroid_mapping(
 
 def calculate_embeddings(
         ref_counts,
-        reference_genes,
         new_counts,
-        new_genes,
-        reference_atlas,
-        select_median: bool = True,
+        ref_umap,
+        umap_cols,
+        use_median: bool = True,
         knn: int = 10,
         write_assignment_dataframe: Path = None,
         step: int = 1_000
@@ -215,19 +195,14 @@ def calculate_embeddings(
     ----------
     ref_counts :
         sparse reference matrix
-    reference_genes :
-        reference variable gene list
     new_counts :
         sparse sample matrix
-    new_genes :
-        if using, query matrix gene list--otherwise, can be reference variable
-        genes list subset to genes measured in query dataset
-    reference_atlas :
+    ref_umap :
         coordinates representing the embeddings for each cell from the
         reference atlas
-    scale_factor : int, optional
-        scale factor for normalization, scanpy and Seurat use 10,000
-    select_median : bool, optional
+    umap_cols :
+        umap coord column names in `ref_umap`
+    use_median : bool, optional
         whether to calculate the median or a weighted average for the query
         embeddings
     knn : int, optional
@@ -243,12 +218,10 @@ def calculate_embeddings(
     start_time = time.time()
     print(start_time)
     if write_assignment_dataframe.is_file():
-        assignment_positions = pd.read_csv(
-            write_assignment_dataframe, index_col=0)
-        return assignment_positions
+        return pd.read_csv(write_assignment_dataframe, index_col=0)
 
-    assignment_positions = {}
     # chunk over cells in new dataset
+    assignment_positions = {}
     for i in track(range(0, new_counts.shape[0], step), description="corr..."):
         sub_new = new_counts.iloc[i:i+step]
         corr_scores = []
@@ -262,19 +235,21 @@ def calculate_embeddings(
                 corr_2_matrix(sub_new.to_numpy(), sub_ref.to_numpy()),
                 index=sub_new.index, columns=sub_ref.index)]
 
-        # join ref_cell batches and iterate over new_cells
-        for idx, r in pd.concat(corr_scores, axis=1).iterrows():
+        # join batches by new cell id and iterate over new_cells
+        for new_cell_id, row in pd.concat(corr_scores, axis=1).iterrows():
             # select knn reference cells based on largest correlations
-            r = r.nlargest(knn)
-            coords = ref_metadata.loc[r.index, ["umap0", "umap1"]].to_numpy()
+            row = row.nlargest(knn)
+
+            # extract umap coordinates for selected reference cells
+            coords = ref_umap.loc[row.index, umap_cols].to_numpy()
 
             # take median/corr weighted average of reference UMAP coordinates
-            coords = np.median(coords, axis=0) if select_median else np.average(
-                coords, axis=0, weights=r.to_numpy())
-            assignment_positions[idx] = coords
+            coords = np.median(coords, axis=0) if use_median else np.average(
+                coords, axis=0, weights=row.to_numpy())
+            assignment_positions[new_cell_id] = coords
 
     assignment_positions = pd.DataFrame.from_dict(
-        assignment_positions, orient="index", columns=["umap0", "umap1"])
+        assignment_positions, orient="index", columns=list(umap_cols))
 
     # Save output to local machine
     print(assignment_positions)
@@ -286,45 +261,168 @@ def calculate_embeddings(
 
 
 def __main__(
-        ref_data_path: Path,
-        ref_meta_path: Path,
-        ref_gene_path: Path,
+        ref_dir: Path,
+        new_dir: Path,
+        out_dir: Path,
+        umap_cols: tuple = ("umap_1", "umap_2"),
         scale_factor: float = 10_000,
         norm_seq_depth: bool = True,
+        use_median: bool = True,
+        knn: int = 10,
         step: int = 1_000
 ):
+    """"""
+    """prepare reference dataset and output paths"""
+    corr_dir = out_dir.joinpath("corr_scores")
+    corr_dir.mkdir(exist_ok=True, parents=True)
+    centroid_dir = out_dir.joinpath("centroid_assignments")
+    centroid_dir.mkdir(exist_ok=True, parents=True)
+    coord_dir = out_dir.joinpath("umap_coordinates")
+    coord_dir.mkdir(exist_ok=True, parents=True)
+    plot_dir = out_dir.joinpath("umap_plots")
+    plot_dir.mkdir(exist_ok=True, parents=True)
+
     # extract relevant genes from reference file
-    ref_variable_genes = pd.read_csv(ref_gene_path, usecols=['x'])['x']
-
-    # only load relevant genes from reference dataset
-    ref_data = []
-    for chunk in track(
-            pd.read_csv(ref_data_path, index_col=0, chunksize=step),
-            description="loading..."):
-        ref_data += [chunk.loc[chunk.index.isin(ref_variable_genes)]]
-
-    # Revert ref_data
-    ref_data = np.expm1(pd.concat(ref_data))
-    print(ref_data.shape)
-    new_data = pd.read_csv("", index_col=0)  # index is gene label
+    ref_genes_path = ref_dir.joinpath("ref_var_genes.csv")
+    ref_variable_genes = pd.read_csv(ref_genes_path, usecols=['x'])['x']
 
     # Load in reference variable genes, metadata, and sparse matrix
-    ref_metadata = pd.read_csv(ref_meta_path, index_col=0)
+    ref_metadata_path = ref_dir.joinpath("wang_metadata.csv")
+    ref_metadata = pd.read_csv(ref_metadata_path, index_col=0)
+    ref_metadata['dataset_id'] = "wang et al"
 
-    # Identify overlapping genes between reference dataset and query dataset
-    (ref_data, new_data), g = intersect_index(ref_data, new_data)
-    print(f'Using a common set of {len(g)} genes.')
+    # only load relevant genes from reference dataset
+    filtered_path = out_dir.joinpath("filtered_normed_wang_ref.csv")
+    if not filtered_path.is_file():
+        ref_data = []
+        ref_counts_path = ref_dir.joinpath("wang_ref.csv")
+        counts = None
+        for chunk in track(
+                pd.read_csv(ref_counts_path, index_col=0, chunksize=step),
+                description="loading..."):
+            # Revert ref_data transformed with log1p
+            chunk = np.expm1(chunk)  # gene x cell matrix
 
-    # normalize and convert to cell x gene matrices
-    print('Normalizing sample matrix to sequencing depth per cell')
-    ref_data = normalize_counts(
-        ref_data, scalar=scale_factor, gene_x_cell=True, log=True).T
-    print('Normalizing reference matrix to sequencing depth per cell')
-    new_data = normalize_counts(
-        new_data, scalar=scale_factor, gene_x_cell=True, log=True).T
+            # keep running total of UMI counts per cell, for all genes
+            chunk_sum = chunk.sum(axis=0, numeric_only=True)
+            counts = chunk_sum if counts is None else counts + chunk_sum
+
+            # filter to only variable genes
+            chunk = chunk.loc[chunk.index.isin(ref_variable_genes)]
+            ref_data += [chunk]
+
+        # concat chunked raw data, normalize
+        print('Normalizing sample matrix to sequencing depth per cell')
+        ref_data = normalize_counts(
+            pd.concat(ref_data), scalar=scale_factor,
+            norm_seq_depth=norm_seq_depth, gene_x_cell=True, log=True)
+
+        # filter to cells in both count matrix and reference metadata
+        ref_data.loc[ref_data.index.intersection(ref_metadata.index)].to_csv(
+            filtered_path)
+
+    # convert to cell x gene matrix
+    ref_data = pd.read_csv(filtered_path, index_col=0).T
+    print(ref_data.shape)
+
+    """run centroid_mapping, calculate_embeddings on each query dataset"""
+    assignment_path = out_dir.joinpath("mapped_centroids.csv")
+    if not assignment_path.is_file():
+        assignments = []
+        for query_path in new_dir.glob('*.csv'):
+            """Prepare query dataset"""
+            print('Normalizing reference matrix to sequencing depth per cell')
+            query_data = normalize_counts(
+                pd.read_csv(query_path, index_col=0),  # index is gene
+                scalar=scale_factor, norm_seq_depth=norm_seq_depth,
+                gene_x_cell=True, log=True).T  # index is cell
+
+            # Identify overlapping genes between reference and query datasets
+            gg = ref_data.columns.intersection(query_data.columns)
+            print(f'{query_path.stem}: Using a common set of {len(gg)} genes.')
+            query_data = query_data.loc[:, gg]
+            corr, cell_type = centroid_mapping(
+                ref_counts=ref_data.loc[:, gg],
+                new_counts=query_data,
+                ref_metadata=ref_metadata,
+                write_assignment_df=centroid_dir.joinpath(query_path.name),
+                write_corr_scores_df=corr_dir.joinpath(query_path.name))
+
+            # get peak correlation for each cell
+            corr = corr.max(axis=1).to_frame(name='high_score')
+            corr[['dataset_id', 'cbc']] = corr.index.str.split(
+                '_', expand=True)
+
+            # add dataset id to cluster assignments
+            name = query_path.stem
+            corr['datasetid'] = name.split('_')[0] if '_' in name else name
+
+            # extract umap coordinates
+            coords = calculate_embeddings(
+                ref_counts=ref_data.loc[:, gg],
+                new_counts=query_data,
+                ref_umap=ref_metadata,
+                umap_cols=umap_cols,
+                use_median=use_median,
+                knn=knn,
+                write_assignment_dataframe=coord_dir.joinpath(query_path.name))
+            assignments += [pd.concat([corr, cell_type, coords], axis=1)]
+
+        # index is cell id, cols high score, dataset_id, cbc, celltype, 2 umap
+        assignments = pd.concat(assignments)
+        mapping = {  # desired label: [dataset_ids]
+            'SADB-19 cell': ['s1', 's2', 's3', 's4', 's5'],
+            'CVS-N2c cell': ['c1', 'c2', 'c3', 'c4'],
+            'CVS-N2c nuc': ['n1', 'n2', 'n3', 'n4'],
+            'Uninfected cell': ['u1'], 'Uninfected nuc': ['u2']}
+        for k, v in mapping.items():
+            assignments.loc[assignments['dataset_id'].isin(v), 'cbc'] = k
+
+        assignments.to_csv(out_dir.joinpath('filtered_assignments.csv'))
+
+    # plot high score distribution
+    assignments = pd.read_csv(assignment_path)
+    plt.figure(figsize=(10, 5))
+    plt.xticks(rotation=45)
+    sns.violinplot(
+        data=assignments, x='dataset_id', y='high_score', hue='dataset_id',
+        legend=False, alpha=0.5)  #palette=dataset_palette)
+    plt.show()
+
+    # Drop all rows where high_score is <0.2
+    total_cells = assignments.shape[0]
+    assignments = assignments.query('high_score >= 0.2')
+    print(f'Number of cells pre-thresholding: {total_cells}')
+    print(f'Number of cells post-thresholding: {assignments.shape[0]}')
+    print('Percentage of cells retained for analysis:')
+    print(f'{100 * assignments.shape[0] / total_cells:.2f}%')
+
+    # plot cell type umaps
+    for cell_type in track(
+            ref_metadata['type_updated'].unique(), description='plot...'):
+        fig, ax = plt.subplots(figsize=(6, 6))
+        sns.scatterplot(
+            data=ref_metadata.query(f'type_updated == {cell_type}'),
+            x=umap_cols[0], y=umap_cols[1], ax=ax, s=1, marker='.',
+            legend=False, color="black")
+        sns.scatterplot(
+            data=assignments.query(f'type_updated == {cell_type}'),
+            x=umap_cols[0], y=umap_cols[1], hue='dataset_id', ax=ax, s=1,
+            marker='.', alpha=0.3, legend=True)
+        plt.title(cell_type)
+        plt.savefig(
+            plot_dir.joinpath(f"{cell_type}.png"), dpi=300,
+            bbox_inches="tight")
+        plt.clf()
 
 
 if __name__ == '__main__':
     REF_DIR = Path(
-        "/Users/ikogbonna/Documents/Lab/Cadwell Lab/Data/barcoded_tech_data/wang_ref_atlas")
-    __main__()
+        "/Users/ikogbonna/Documents/Lab/Cadwell Lab/Data/barcoded_tech_data")
+    if not REF_DIR.is_dir():
+        REF_DIR = Path("/data/scratch/ike/barcoded_tech_data")
+
+    __main__(
+        ref_dir=REF_DIR.joinpath("wang_ref_atlas"),
+        new_dir=REF_DIR.joinpath("sparse_matrices"),
+        out_dir=REF_DIR.joinpath("outputs"))
