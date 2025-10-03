@@ -136,8 +136,8 @@ def centroid_mapping(
         ref_counts,
         new_counts,
         ref_metadata,
-        write_assignment_df: Path = None,
-        write_corr_scores_df: Path = None,
+        write_assignment_df: Path,
+        write_corr_scores_df: Path,
         step: int = 1_000
 ):
     """
@@ -145,8 +145,10 @@ def centroid_mapping(
     ----------
     ref_counts :
         sparse reference matrix. Normalized and filtered to relevant genes.
+        cell x gene matrix.
     new_counts :
         sparse sample matrix. Normalized and filtered to relevant genes.
+        cell x gene matrix.
     ref_metadata :
     write_assignment_df : Path
         where to save cell type assignment dataframe to on local machine
@@ -156,11 +158,17 @@ def centroid_mapping(
 
     Returns
     -------
-    type_assignment : pd.Series
     corr_Scores : pd.DataFrame
+    type_assignment : pd.Series
     """
     start_time = time.time()
     print(start_time)
+
+    if write_assignment_df.is_file() and write_corr_scores_df.is_file():
+        corr_scores = pd.read_csv(write_corr_scores_df, index_col=0)
+        type_assignment = pd.read_csv(
+            write_assignment_df, index_col=0).squeeze()
+        return corr_scores, type_assignment
 
     # filter to cells in count matrix and reference metadata
     ref_counts = ref_counts.loc[
@@ -173,41 +181,39 @@ def centroid_mapping(
 
     # For each cell, calculate correlations across all genes for each centroid
     corr_scores = []
-    for c in track(range(0, new_counts.shape[0], step), description="corr..."):
-        subset = new_counts.iloc[c:c+step]
+    for i in track(range(0, new_counts.shape[0], step), description="corr..."):
+        subset = new_counts.iloc[i:i+step]
         corr_scores += [pd.DataFrame(
             corr_2_matrix(subset.to_numpy(), ref_counts.to_numpy()),
-            columns=ref_counts.index, index=subset.index)]
+            index=subset.index, columns=ref_counts.index)]
 
     corr_scores = pd.concat(corr_scores)
-    if write_corr_scores_df is not None:
-        corr_scores.to_csv(write_corr_scores_df)
+    corr_scores.to_csv(write_corr_scores_df)
 
     # Assign clusters based on highest value concordance (excluding any NaNs)
     type_assignment = corr_scores.idxmax(axis='columns')
-    if write_assignment_df is not None:
-        type_assignment.to_csv(write_assignment_df)
+    type_assignment.to_csv(write_assignment_df)
 
     print('Done assigning cell types! :)')
     print(f'This took... {time.time() - start_time} seconds')
-    return type_assignment, corr_scores
+    return corr_scores, type_assignment
 
 
 def calculate_embeddings(
-        reference_counts,
+        ref_counts,
         reference_genes,
         new_counts,
         new_genes,
         reference_atlas,
-        scale_factor: float = 10_000,
         select_median: bool = True,
         knn: int = 10,
-        write_assignment_dataframe: Path = None
+        write_assignment_dataframe: Path = None,
+        step: int = 1_000
 ):
     """
     Parameters
     ----------
-    reference_counts :
+    ref_counts :
         sparse reference matrix
     reference_genes :
         reference variable gene list
@@ -232,83 +238,51 @@ def calculate_embeddings(
 
     Returns
     -------
-
+    assignment_positions : pd.DataFrame
     """
-    starttime = time.time()
-    print(starttime)
+    start_time = time.time()
+    print(start_time)
+    if write_assignment_dataframe.is_file():
+        assignment_positions = pd.read_csv(
+            write_assignment_dataframe, index_col=0)
+        return assignment_positions
 
-    # # Identify overlapping genes between reference dataset and query dataset
-    # gg = sorted(list(set(reference_genes).intersection(new_genes)))
-    # print(f'Using a common set of {len(gg)} genes.')
-    #
-    # # For both datasets, pull all rows corresponding to variable features
-    # new_counts = new_counts.loc[gg]
-    # reference_counts = reference_counts.loc[gg]
-    #
-    # print('Normalizing sample matrix to sequencing depth per cell')
-    # print('Normalizing reference matrix to sequencing depth per cell')
-    #
-    # # This is then natural-log transformed using log1p
-    # X = np.log1p(normalize_counts(new_counts, scale_factor))
-    # T = np.log1p(normalize_counts(reference_counts, scale_factor))
+    assignment_positions = {}
+    # chunk over cells in new dataset
+    for i in track(range(0, new_counts.shape[0], step), description="corr..."):
+        sub_new = new_counts.iloc[i:i+step]
+        corr_scores = []
 
+        # chunk over cells in reference dataset
+        for j in range(0, ref_counts.shape[0], step):
+            sub_ref = ref_counts.iloc[j:j+step]
 
-    ref_population = T.columns
-    input_cells = X.columns
-    assignmentPositions = pd.DataFrame()
-    individual_assignment = []
-    print('Beginning correlation calculations')
-    if select_median == True:
-        print('Assigning coordinates based on median')
+            # compute new_cells x ref_cells expression correlation matrix
+            corr_scores += [pd.DataFrame(
+                corr_2_matrix(sub_new.to_numpy(), sub_ref.to_numpy()),
+                index=sub_new.index, columns=sub_ref.index)]
 
-    if select_median == False:
-        print('Assigning coordinates based on weighted means')
+        # join ref_cell batches and iterate over new_cells
+        for idx, r in pd.concat(corr_scores, axis=1).iterrows():
+            # select knn reference cells based on largest correlations
+            r = r.nlargest(knn)
+            coords = ref_metadata.loc[r.index, ["umap0", "umap1"]].to_numpy()
 
-    global build_correlations
+            # take median/corr weighted average of reference UMAP coordinates
+            coords = np.median(coords, axis=0) if select_median else np.average(
+                coords, axis=0, weights=r.to_numpy())
+            assignment_positions[idx] = coords
 
-    def build_correlations(sample_cell):
-        global build_correlations
-        # global assignmentPositions
-        print('.', end='', flush=True)
-        individual_corr = []
-        for ref_cell in ref_population:
-            calculated = corr2(X[sample_cell], T[ref_cell])
-            individual_corr.append(calculated)
-        ind = reference_atlas[np.argpartition(individual_corr, -knn)][-knn:]
-
-        if select_median == True:
-            individual_assignment = np.median(ind, axis=0)
-
-        if select_median == False:
-            res = np.array(individual_corr)
-            weights = res[np.argpartition(res, -knn)][-knn:]
-            weights = np.transpose(weights)
-            individual_assignment = np.average(ind, axis=0,
-                                               weights=weights)
-
-        temp = pd.DataFrame(individual_assignment)
-        temp.columns = [sample_cell]
-        return temp
-
-    #
-    pool = mp.Pool(32)
-    print('Calling workers')  # Create a multiprocessing Pool
-    assignmentPositions = pd.concat(
-        pool.map(build_correlations, input_cells), axis=1)
+    assignment_positions = pd.DataFrame.from_dict(
+        assignment_positions, orient="index", columns=["umap0", "umap1"])
 
     # Save output to local machine
-    print(assignmentPositions)
-    assignmentPositions = assignmentPositions.T
-    assignmentPositions.to_csv(write_assignment_dataframe)
+    print(assignment_positions)
+    assignment_positions.to_csv(write_assignment_dataframe)
 
     print('Done finding UMAP coords! :)')
-    print()
-    print('This took...')
-    endtime = time.time()
-    print(endtime - starttime)
-    print('seconds!')
-
-    return assignmentPositions
+    print(f'This took... {time.time() - start_time} seconds')
+    return assignment_positions
 
 
 def __main__(
