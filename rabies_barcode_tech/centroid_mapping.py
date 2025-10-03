@@ -16,9 +16,7 @@ import multiprocess as mp
 import matplotlib.pyplot as plt
 
 from pathlib import Path
-
-
-REF_DIR = Path(".../")
+from rich.progress import track
 
 
 def corr2(
@@ -32,18 +30,179 @@ def corr2(
     return r
 
 
+def corr_2_matrix(
+        a: np.ndarray,
+        b: np.ndarray
+):
+    """corr2 func extended to 2d input matrices.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        2d array to correlate. Has shape (samples_a, observations)
+    b : np.ndarray
+        Another 2d array to correlate. Has shape (samples_b, observations)
+
+    Returns
+    -------
+    corr_matrix
+        2d array with shape (samples_a, samples_b). The value at [i, j] is the
+        Pearson correlation between the i_th sample in array `a` and j_th
+        sample in array `b`.
+
+    """
+    # Center columns (genes)
+    mat_a = a - a.mean(axis=1, keepdims=True)  # cell x gene matrix
+    mat_b = b - b.mean(axis=1, keepdims=True)  # cell x gene matrix
+
+    # Compute numerator: X^T @ Y (dot product of centered columns)
+    numerator = mat_a @ mat_b.T  # shape: (n_cells_a, n_cells_b)
+
+    # Compute denominator: column-wise norms, shape = (n_cells1, n_cells2)
+    denominator = np.outer(
+        np.linalg.norm(mat_a, axis=1), np.linalg.norm(mat_b, axis=1))
+
+    # Pearson correlation matrix
+    corr_matrix = numerator / denominator
+    return corr_matrix
+
+
+def intersect_index(
+        *args
+):
+    """Filter dataframes based on index intersection.
+
+    Parameters
+    ----------
+    *args : pd.DataFrame
+        Dataframes to filter.
+
+    Returns
+    -------
+    dfs : list[pd.DataFrame]
+        Dataframes filtered to intersection of index values.
+    g : pd.Index
+        Intersection of all indices for dataframes.
+    """
+    g = args[0].index
+    for df in args[1:]:
+        g = g.intersection(df.index)
+
+    g = g.sort_index(ascending=True)
+    dfs = [df.loc[g] for df in args]
+    return dfs, g
+
+
+def normalize_counts(
+        count_matrix: pd.DataFrame,
+        scalar: float = None,
+        gene_x_cell: bool = True,
+        log: bool = True
+):
+    """Normalize a count matrix to total UMI counts per cell.
+
+    Parameters
+    ----------
+    count_matrix : pd.DataFrame
+        One axis corresponds to identified genes. Other axis corresponds to
+        sequenced cells.
+    scalar : float, optional
+        Scale factor with which to adjust normalized counts.
+        Defaults to None, in which case counts are not scaled.
+    gene_x_cell : bool, optional
+        If True, `count_matrix` is a [gene, cell] matrix. If False,
+        `count_matrix` is a [cell, gene] matrix.
+    log : bool, optional
+        If True, take logarithm of counts + 1
+
+    Returns
+    -------
+    new_count_matrix : pd.DataFrame
+        `count_matrix` normalized to total UMI counts per cell and scaled.
+
+    Notes
+    -----
+    Genes counts for each cell are divided by the total UMIs for that cell,
+    then multiplied by a scale factor.
+    """
+    counts = count_matrix.sum(numeric_only=True, axis=int(not gene_x_cell))
+    new_counts = count_matrix.divide(counts, axis=int(gene_x_cell))
+    new_counts = new_counts if scalar is None else new_counts * scalar
+    new_counts = np.log1p(new_counts) if log else new_counts
+    return new_counts
+
+
 def centroid_mapping(
+        ref_counts,
+        new_counts,
+        ref_metadata,
+        write_assignment_df: Path = None,
+        write_corr_scores_df: Path = None,
+        step: int = 1_000
+):
+    """
+    Parameters
+    ----------
+    ref_counts :
+        sparse reference matrix. Normalized and filtered to relevant genes.
+    new_counts :
+        sparse sample matrix. Normalized and filtered to relevant genes.
+    ref_metadata :
+    write_assignment_df : Path
+        where to save cell type assignment dataframe to on local machine
+    write_corr_scores_df : Path
+        where to save correlation coefficient matrix on local machine
+    step : int, optional
+
+    Returns
+    -------
+    type_assignment : pd.Series
+    corr_Scores : pd.DataFrame
+    """
+    start_time = time.time()
+    print(start_time)
+
+    # filter to cells in count matrix and reference metadata
+    ref_counts = ref_counts.loc[
+        ref_counts.index.intersection(ref_metadata.index)]
+    ref_counts['type_updated'] = ref_metadata.loc[
+        ref_counts.index, 'type_updated']
+
+    # build centroids table of mean for each variable gene within a cluster
+    ref_counts = ref_counts.groupby("type_updated").mean()  # cluster x gene
+
+    # For each cell, calculate correlations across all genes for each centroid
+    corr_scores = []
+    for c in track(range(0, new_counts.shape[0], step), description="corr..."):
+        subset = new_counts.iloc[c:c+step]
+        corr_scores += [pd.DataFrame(
+            corr_2_matrix(subset.to_numpy(), ref_counts.to_numpy()),
+            columns=ref_counts.index, index=subset.index)]
+
+    corr_scores = pd.concat(corr_scores)
+    if write_corr_scores_df is not None:
+        corr_scores.to_csv(write_corr_scores_df)
+
+    # Assign clusters based on highest value concordance (excluding any NaNs)
+    type_assignment = corr_scores.idxmax(axis='columns')
+    if write_assignment_df is not None:
+        type_assignment.to_csv(write_assignment_df)
+
+    print('Done assigning cell types! :)')
+    print(f'This took... {time.time() - start_time} seconds')
+    return type_assignment, corr_scores
+
+
+def calculate_embeddings(
         reference_counts,
         reference_genes,
         new_counts,
         new_genes,
-        reference_clusters,
-        norm_seq_depth: bool = True,
-        scale_factor: int = 10_000,
-        return_c_means: bool = False,
-        total_clusters: int = None,
-        write_assignment_df: list = None,
-        write_corr_scores_df: list = None
+        reference_atlas,
+        scale_factor: float = 10_000,
+        select_median: bool = True,
+        knn: int = 10,
+        write_assignment_dataframe: Path = None
 ):
     """
     Parameters
@@ -55,193 +214,54 @@ def centroid_mapping(
     new_counts :
         sparse sample matrix
     new_genes :
-        sample variable gene list
-    reference_clusters :
-        reference metadata column with cell type annotations
-    norm_seq_depth : bool, optional
-        normalizes matrices by dividing by total counts per cell, multiplying
-        by a scale factor, then taking the log of that value + 1
+        if using, query matrix gene list--otherwise, can be reference variable
+        genes list subset to genes measured in query dataset
+    reference_atlas :
+        coordinates representing the embeddings for each cell from the
+        reference atlas
     scale_factor : int, optional
         scale factor for normalization, scanpy and Seurat use 10,000
-    return_c_means : bool, optional
-        whether to return matrix of correlation values for each cell x centroid
-        combo
-    total_clusters : int, optional
-        if you want to specify a different number of unique clusters
-    write_assignment_df : list, optional
-        where to save cell type assignment dataframe to on local machine
-    write_corr_scores_df : list, optional
-        where to save correlation coefficient matrix on local machine
+    select_median : bool, optional
+        whether to calculate the median or a weighted average for the query
+        embeddings
+    knn : int, optional
+        number of neighbors to consider when selecting median/weighted mean
+    write_assignment_dataframe : Path, optional
+        where to save assignment dataframe to on local machine
+    step : int, optional
 
     Returns
     -------
 
     """
-    start_time = time.time()
-    print(start_time)
-    write_assignment_df = (
-        [] if write_assignment_df is None else write_assignment_df)
-    write_corr_scores_df = (
-        [] if write_corr_scores_df is None else write_corr_scores_df)
-
-    """as written, assumes gene x cell matrix"""
-    if norm_seq_depth:
-        # Genes counts for each cell are divided by the total UMIs for that cell, then multiplied by a scale factor.
-        print('Normalizing sample matrix to sequencing depth per cell')
-        new_counts = new_counts.divide(
-            new_counts.sum(numeric_only=True, axis=0), axis=1) * scale_factor
-
-    X = np.log1p(new_counts)  # log1p normalization
-
-    # Repeat the same normalization steps as above, but for reference dataset
-    if norm_seq_depth:
-        print('Normalizing reference matrix to sequencing depth per cell')
-        reference_counts.loc['total_counts'] = reference_counts.sum(
-            numeric_only=True, axis=0)
-        normalized = reference_counts.divide(
-            reference_counts.loc['total_counts'], axis=1)
-        normalized = normalized * scale_factor
-        T = np.log1p(normalized)
-    else:
-        print('No sequencing depth normalization')
-        T = np.log1p(T)
-
-    # Save the normalized copies of the matrices
-    norm_ref = T.copy(deep=True)
-    norm_sample = X.copy(deep=True)
-
-    # Identify overlapping genes between reference dataset and query dataset
-    gg = sorted(list(set(reference_genes) & set(new_genes)))
-
-    # Report back how many genes are in common+being used for query mapping
-    print('Using a common set of ' + str(len(gg)) + ' genes.')
-    print()
-
-    # For both datasets, pull all rows corresponding to variable features
-    T = T.loc[gg]
-    X = X.loc[gg]
-
-    # If clusters are already specified, set K to that number
-    if total_clusters is not None:
-        K = total_clusters
-    # Otherwise, manually calculate the number of total clusters by adding 1 to total number of reference clusters
-    else:
-        types = reference_clusters.unique()
-        types = pd.DataFrame(types)
-        types.columns = ['type_assignment']
-        types['cluster_number'] = types.index
-        # Make dictionary to convert to integer cluster labels
-        cell_type_dict = dict(
-            zip(types['type_assignment'], types['cluster_number']))
-        numerical_clusters = reference_clusters.replace(cell_type_dict)
-        K = np.max(numerical_clusters) + 1
-
-    # Assign clusters to cells in reference atlas
-    T.columns = (ref_metadata['type_updated'])
-    clusters = ref_metadata['type_updated'].unique()
-
-    # Build centroids table by calculating the mean for each variable gene for all cells within a cluster
-    centroids = pd.DataFrame(index=T.index)
-    for celltype in clusters:
-        corresponding_cells = T[celltype]
-        means = corresponding_cells.mean(axis=1)
-        means = pd.DataFrame(means)
-        means.columns = [celltype]
-        centroids = pd.concat([centroids, means], axis=1)
-
-        # For each cell, calculate correlation coefficient across all variable genes for each centroid
-    # print(centroids)
-    input_cells = X.columns
-    Cmeans = []
-    for sample_cell in input_cells:
-        individual_Cmeans = [sample_cell]
-        for celltype in clusters:
-            calculated = corr2(X[sample_cell], centroids[celltype])
-            individual_Cmeans.append(calculated)
-        Cmeans.append(individual_Cmeans)
-    corr_scores = pd.DataFrame(Cmeans)
-    corr_scores = corr_scores.set_index(0)
-    corr_scores.columns = clusters
-
-    # Assign clusters based on highest value concordance (excluding any NaNs)
-    type_assignment = corr_scores.idxmax(axis=1)
-
-    # Save cluster assignments and correlation coefficients to local machine
-    type_assignment.to_csv(write_assignment_df)
-    corr_scores.to_csv(write_corr_scores_df)
-
-    print('Done assigning cell types! :)')
-    print()
-    print('This took...')
-    endtime = time.time()
-    print(endtime - start_time)
-    print('seconds!')
-
-    # Return normalized matrices and type assignments
-    if return_c_means:
-        return type_assignment, corr_scores, norm_ref, norm_sample
-
-    return type_assignment, norm_ref, norm_sample
-
-
-def calculate_embeddings(
-        referenceCounts,  # reference matrix
-        referenceGenes,  # reference variable genes list
-        newCounts,  # query matrix
-        newGenes,
-        # if using, query matrix gene list--otherwise, can be reference variable genes list subset to genes measured in query dataset
-        referenceAtlas,
-        # coordinates representing the embeddings for each cell from the reference atlas
-        scaleFactor=10000,  # normalization scale factor
-        selectMedian=True,
-        # whether to calculate the median or a weighted average for the query embeddings
-        knn=10,
-        # number of neighbors to consider when selecting median/weighted mean
-        write_assignment_dataframe=[]
-        # where to save assignment dataframe to on local machine
-):
-
     starttime = time.time()
     print(starttime)
 
-    # Genes counts for each cell are divided by the total UMIs for that cell, then multiplied by a scale factor.
-    print('Normalizing sample matrix to sequencing depth per cell')
-    newCounts.loc['total_counts'] = newCounts.sum(numeric_only=True,
-                                                  axis=0)
-    normalized = newCounts.divide(newCounts.loc['total_counts'], axis=1)
-    normalized = normalized * scaleFactor
-    # This is then natural-log transformed using log1p
-    X = np.log1p(normalized)
+    # # Identify overlapping genes between reference dataset and query dataset
+    # gg = sorted(list(set(reference_genes).intersection(new_genes)))
+    # print(f'Using a common set of {len(gg)} genes.')
+    #
+    # # For both datasets, pull all rows corresponding to variable features
+    # new_counts = new_counts.loc[gg]
+    # reference_counts = reference_counts.loc[gg]
+    #
+    # print('Normalizing sample matrix to sequencing depth per cell')
+    # print('Normalizing reference matrix to sequencing depth per cell')
+    #
+    # # This is then natural-log transformed using log1p
+    # X = np.log1p(normalize_counts(new_counts, scale_factor))
+    # T = np.log1p(normalize_counts(reference_counts, scale_factor))
 
-    print('Normalizing reference matrix to sequencing depth per cell')
-    referenceCounts.loc['total_counts'] = referenceCounts.sum(
-        numeric_only=True, axis=0)
-    normalized = referenceCounts.divide(
-        referenceCounts.loc['total_counts'], axis=1)
-    normalized = normalized * scaleFactor
-    T = np.log1p(normalized)
-
-    # Identify overlapping genes between reference dataset and query dataset (already did this in R)
-    gg = sorted(list(set(referenceGenes) & set(newGenes)))
-
-    # Report back how many genes are in common+being used for query mapping
-    print('Using a common set of ' + str(len(gg)) + ' genes.')
-    print()
-
-    # For query dataset, pull all rows corresponding to variable features
-    # If sparse matrix, send to dense
-    T = T.loc[gg]
-    X = X.loc[gg]
 
     ref_population = T.columns
     input_cells = X.columns
     assignmentPositions = pd.DataFrame()
     individual_assignment = []
     print('Beginning correlation calculations')
-    if selectMedian == True:
+    if select_median == True:
         print('Assigning coordinates based on median')
 
-    if selectMedian == False:
+    if select_median == False:
         print('Assigning coordinates based on weighted means')
 
     global build_correlations
@@ -254,12 +274,12 @@ def calculate_embeddings(
         for ref_cell in ref_population:
             calculated = corr2(X[sample_cell], T[ref_cell])
             individual_corr.append(calculated)
-        ind = referenceAtlas[np.argpartition(individual_corr, -knn)][-knn:]
+        ind = reference_atlas[np.argpartition(individual_corr, -knn)][-knn:]
 
-        if selectMedian == True:
+        if select_median == True:
             individual_assignment = np.median(ind, axis=0)
 
-        if selectMedian == False:
+        if select_median == False:
             res = np.array(individual_corr)
             weights = res[np.argpartition(res, -knn)][-knn:]
             weights = np.transpose(weights)
@@ -291,14 +311,46 @@ def calculate_embeddings(
     return assignmentPositions
 
 
-def __main__():
-    # Load in reference variable genes, metadata, and sparse matrix
-    ref_data = pd.read_csv(REF_DIR.joinpath('ref_matrix.csv'), index_col=0)
-    ref_metadata = pd.read_csv(REF_DIR.joinpath('ref_metadata.csv'))
-    ref_variable_genes = pd.read_csv(REF_DIR.joinpath('ref_var_genes.csv'))
+def __main__(
+        ref_data_path: Path,
+        ref_meta_path: Path,
+        ref_gene_path: Path,
+        scale_factor: float = 10_000,
+        norm_seq_depth: bool = True,
+        step: int = 1_000
+):
+    # extract relevant genes from reference file
+    ref_variable_genes = pd.read_csv(ref_gene_path, usecols=['x'])['x']
+
+    # only load relevant genes from reference dataset
+    ref_data = []
+    for chunk in track(
+            pd.read_csv(ref_data_path, index_col=0, chunksize=step),
+            description="loading..."):
+        ref_data += [chunk.loc[chunk.index.isin(ref_variable_genes)]]
 
     # Revert ref_data
-    raw_ref_data = np.expm1(ref_data)
-    print(raw_ref_data.shape)
+    ref_data = np.expm1(pd.concat(ref_data))
+    print(ref_data.shape)
+    new_data = pd.read_csv("", index_col=0)  # index is gene label
+
+    # Load in reference variable genes, metadata, and sparse matrix
+    ref_metadata = pd.read_csv(ref_meta_path, index_col=0)
+
+    # Identify overlapping genes between reference dataset and query dataset
+    (ref_data, new_data), g = intersect_index(ref_data, new_data)
+    print(f'Using a common set of {len(g)} genes.')
+
+    # normalize and convert to cell x gene matrices
+    print('Normalizing sample matrix to sequencing depth per cell')
+    ref_data = normalize_counts(
+        ref_data, scalar=scale_factor, gene_x_cell=True, log=True).T
+    print('Normalizing reference matrix to sequencing depth per cell')
+    new_data = normalize_counts(
+        new_data, scalar=scale_factor, gene_x_cell=True, log=True).T
 
 
+if __name__ == '__main__':
+    REF_DIR = Path(
+        "/Users/ikogbonna/Documents/Lab/Cadwell Lab/Data/barcoded_tech_data/wang_ref_atlas")
+    __main__()
