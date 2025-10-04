@@ -328,10 +328,8 @@ def __main__(
 
     # convert to cell x gene matrix
     ref_data = pd.read_csv(filtered_path, index_col=0).T
-    print(chunk)
-    print(ref_data)
-    import sys;
-    sys.exit()
+    print(f'reference cell count: {ref_data.shape[0]}')
+    print(f'variable genes count: {ref_data.shape[1]}')
 
     """run centroid_mapping, calculate_embeddings on each query dataset"""
     assignment_path = out_dir.joinpath("mapped_centroids.csv")
@@ -355,6 +353,9 @@ def __main__(
                 ref_metadata=ref_metadata,
                 write_assignment_df=centroid_dir.joinpath(query_path.name),
                 write_corr_scores_df=corr_dir.joinpath(query_path.name))
+            print(corr)
+            print(cell_type)
+            return None
 
             # get peak correlation for each cell
             corr = corr.max(axis=1).to_frame(name='high_score')
