@@ -144,7 +144,6 @@ def centroid_mapping(
     type_assignment : pd.DataFrame
     """
     start_time = time.time()
-    print(start_time)
 
     if write_assignment_df.is_file() and write_corr_scores_df.is_file():
         corr_scores = pd.read_csv(write_corr_scores_df, index_col=0)
@@ -216,7 +215,7 @@ def calculate_embeddings(
     assignment_positions : pd.DataFrame
     """
     start_time = time.time()
-    print(start_time)
+
     if write_assignment_dataframe.is_file():
         return pd.read_csv(write_assignment_dataframe, index_col=0)
 
@@ -252,7 +251,6 @@ def calculate_embeddings(
         assignment_positions, orient="index", columns=list(umap_cols))
 
     # Save output to local machine
-    print(assignment_positions)
     assignment_positions.to_csv(write_assignment_dataframe)
 
     print('Done finding UMAP coords! :)')
