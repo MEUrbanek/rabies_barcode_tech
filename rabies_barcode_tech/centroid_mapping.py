@@ -356,7 +356,7 @@ def __main__(
             corr = corr.max(axis=1).to_frame(name='high_score')
             for val in corr.index.str:
                 if val.count("_") != 1:
-                    print(val, count)
+                    print(val)
 
             corr[['dataset_id', 'cbc']] = corr.index.str.split(
                 '_', n=1, expand=True)
