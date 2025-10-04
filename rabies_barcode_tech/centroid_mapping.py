@@ -330,9 +330,8 @@ def __main__(
     if not assignment_path.is_file():
         assignments = []
         logging = {}
-        query_dataset_paths = [
-            f for f in new_dir.glob('*.csv') if not f.name.startswith(".")]
-        for query_path in track(query_dataset_paths, description="mapping..."):
+        for query_path in track(
+                new_dir.glob('[!.]*.csv'), description="mapping..."):
             """Prepare query dataset"""
             query_data = normalize_counts(
                 pd.read_csv(query_path, index_col=0),  # index is gene
@@ -382,8 +381,8 @@ def __main__(
         table = Table(title="Mapping Summary")
         table.add_column("dataset", style="bold cyan")
         table.add_column("n genes", style="magenta")
-        table.add_column("t_centroid", style="green")
-        table.add_column("t_embedding", style="green")
+        table.add_column("t_centroid sec", style="green")
+        table.add_column("t_embedding sec", style="green")
         for d, (g, t_c, t_e) in logging.items():
             table.add_row(d, g, f"{t_c:.2f}", f"{t_e:.2f}")
 
