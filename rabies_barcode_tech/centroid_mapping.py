@@ -13,7 +13,13 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 from pathlib import Path
+from rich.table import Table
+from rich.console import Console
 from rich.progress import track
+from rich.traceback import install
+
+
+install(show_locals=True, width=120)
 
 
 def corr2(
@@ -158,7 +164,7 @@ def centroid_mapping(
 
     # For each cell, calculate correlations across all genes for each centroid
     corr_scores = []
-    for i in track(range(0, new_counts.shape[0], step), description="corr..."):
+    for i in range(0, new_counts.shape[0], step):
         subset = new_counts.iloc[i:i+step]
         corr_scores += [pd.DataFrame(
             corr_2_matrix(subset.to_numpy(), ref_counts.to_numpy()),
@@ -214,7 +220,7 @@ def calculate_embeddings(
 
     # chunk over cells in new dataset
     assignment_positions = {}
-    for i in track(range(0, new_counts.shape[0], step), description="corr..."):
+    for i in range(0, new_counts.shape[0], step):
         sub_new = new_counts.iloc[i:i+step]
         corr_scores = []
 
@@ -323,9 +329,11 @@ def __main__(
     assignment_path = out_dir.joinpath("mapped_centroids.csv")
     if not assignment_path.is_file():
         assignments = []
-        for query_path in new_dir.glob('*.csv'):
+        logging = {}
+        query_dataset_paths = [
+            f for f in new_dir.glob('*.csv') if not f.name.startswith(".")]
+        for query_path in track(query_dataset_paths, description="mapping..."):
             """Prepare query dataset"""
-            print(f'\nNormalizing {query_path.stem}')
             query_data = normalize_counts(
                 pd.read_csv(query_path, index_col=0),  # index is gene
                 scalar=scale_factor, norm_seq_depth=norm_seq_depth,
@@ -333,14 +341,17 @@ def __main__(
 
             # Identify overlapping genes between reference and query datasets
             gg = ref_data.columns.intersection(query_data.columns)
-            print(f'Using a common set of {len(gg)} genes.')
             query_data = query_data.loc[:, gg]
+
+            # map centroids
+            centroid_time = time.time()
             corr, cell_type = centroid_mapping(
                 ref_counts=ref_data.loc[:, gg],
                 new_counts=query_data,
                 ref_metadata=ref_metadata,
                 write_assignment_df=centroid_dir.joinpath(query_path.name),
                 write_corr_scores_df=corr_dir.joinpath(query_path.name))
+            centroid_time = time.time() - centroid_time
 
             # get peak correlation for each cell
             corr = corr.max(axis=1).to_frame(name='high_score')
@@ -352,6 +363,7 @@ def __main__(
             corr['datasetid'] = name.split('_')[0] if '_' in name else name
 
             # extract umap coordinates
+            embedding_time = time.time()
             coords = calculate_embeddings(
                 ref_counts=ref_data.loc[:, gg],
                 new_counts=query_data,
@@ -360,7 +372,22 @@ def __main__(
                 use_median=use_median,
                 knn=knn,
                 write_assignment_dataframe=coord_dir.joinpath(query_path.name))
+            embedding_time = time.time() - embedding_time
             assignments += [pd.concat([corr, cell_type, coords], axis=1)]
+
+            # look data from current loop
+            logging[query_path.name] = (len(gg), centroid_time, embedding_time)
+
+        # print logged metadata
+        table = Table(title="Mapping Summary")
+        table.add_column("dataset", style="bold cyan")
+        table.add_column("n genes", style="magenta")
+        table.add_column("t_centroid", style="green")
+        table.add_column("t_embedding", style="green")
+        for d, (g, t_c, t_e) in logging.items():
+            table.add_row(d, g, f"{t_c:.2f}", f"{t_e:.2f}")
+
+        Console().print(table)
 
         # index is cell id, cols high score, dataset_id, cbc, celltype, 2 umap
         assignments = pd.concat(assignments)
