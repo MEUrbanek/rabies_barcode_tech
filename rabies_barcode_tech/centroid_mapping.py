@@ -354,10 +354,7 @@ def __main__(
 
             # get peak correlation for each cell
             corr = corr.max(axis=1).to_frame(name='high_score')
-            check = corr.index.str.split('_', n=1, expand=True)
-            print(check)
-
-            corr[['dataset_id', 'cbc']] = corr.index.str.split(
+            corr[['dataset_id', 'cbc']] = corr.index.to_series().str.split(
                 '_', n=1, expand=True)
 
             # add dataset id to cluster assignments
