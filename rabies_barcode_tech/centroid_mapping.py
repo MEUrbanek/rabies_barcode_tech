@@ -318,7 +318,7 @@ def __main__(
             ref_data += [chunk]
 
         # concat chunked raw data, normalize, save
-        print('Normalizing sample matrix to sequencing depth per cell')
+        print('Normalizing reference matrix to sequencing depth per cell')
         normalize_counts(
             pd.concat(ref_data), counts=counts, scalar=scale_factor,
             norm_seq_depth=norm_seq_depth, gene_x_cell=True, log=True).to_csv(
@@ -335,7 +335,7 @@ def __main__(
         assignments = []
         for query_path in new_dir.glob('*.csv'):
             """Prepare query dataset"""
-            print('Normalizing reference matrix to sequencing depth per cell')
+            print('Normalizing query matrix to sequencing depth per cell')
             query_data = normalize_counts(
                 pd.read_csv(query_path, index_col=0),  # index is gene
                 scalar=scale_factor, norm_seq_depth=norm_seq_depth,
@@ -354,8 +354,12 @@ def __main__(
 
             # get peak correlation for each cell
             corr = corr.max(axis=1).to_frame(name='high_score')
+            for val in corr.index.str:
+                if val.count("_") != 1:
+                    print(val, count)
+
             corr[['dataset_id', 'cbc']] = corr.index.str.split(
-                '_', expand=True)
+                '_', n=1, expand=True)
 
             # add dataset id to cluster assignments
             name = query_path.stem
