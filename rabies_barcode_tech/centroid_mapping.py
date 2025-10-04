@@ -354,9 +354,8 @@ def __main__(
 
             # get peak correlation for each cell
             corr = corr.max(axis=1).to_frame(name='high_score')
-            for val in corr.index.str:
-                if val.count("_") != 1:
-                    print(val)
+            bad_idx = corr.index[corr.index.str.count("_") != 1]
+            print(bad_idx)
 
             corr[['dataset_id', 'cbc']] = corr.index.str.split(
                 '_', n=1, expand=True)
