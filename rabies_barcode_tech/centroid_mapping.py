@@ -143,8 +143,6 @@ def centroid_mapping(
     corr_Scores : pd.DataFrame
     type_assignment : pd.DataFrame
     """
-    start_time = time.time()
-
     if write_assignment_df.is_file() and write_corr_scores_df.is_file():
         corr_scores = pd.read_csv(write_corr_scores_df, index_col=0)
         type_assignment = pd.read_csv(
@@ -173,9 +171,6 @@ def centroid_mapping(
     type_assignment = corr_scores.idxmax(axis='columns').to_frame(
         name='celltype')
     type_assignment.to_csv(write_assignment_df)
-
-    print('Done assigning cell types! :)')
-    print(f'This took... {time.time() - start_time} seconds')
     return corr_scores, type_assignment
 
 
@@ -214,8 +209,6 @@ def calculate_embeddings(
     -------
     assignment_positions : pd.DataFrame
     """
-    start_time = time.time()
-
     if write_assignment_dataframe.is_file():
         return pd.read_csv(write_assignment_dataframe, index_col=0)
 
@@ -252,9 +245,6 @@ def calculate_embeddings(
 
     # Save output to local machine
     assignment_positions.to_csv(write_assignment_dataframe)
-
-    print('Done finding UMAP coords! :)')
-    print(f'This took... {time.time() - start_time} seconds')
     return assignment_positions
 
 
@@ -335,7 +325,7 @@ def __main__(
         assignments = []
         for query_path in new_dir.glob('*.csv'):
             """Prepare query dataset"""
-            print('Normalizing query matrix to sequencing depth per cell')
+            print(f'\nNormalizing {query_path.stem}')
             query_data = normalize_counts(
                 pd.read_csv(query_path, index_col=0),  # index is gene
                 scalar=scale_factor, norm_seq_depth=norm_seq_depth,
@@ -343,7 +333,7 @@ def __main__(
 
             # Identify overlapping genes between reference and query datasets
             gg = ref_data.columns.intersection(query_data.columns)
-            print(f'{query_path.stem}: Using a common set of {len(gg)} genes.')
+            print(f'Using a common set of {len(gg)} genes.')
             query_data = query_data.loc[:, gg]
             corr, cell_type = centroid_mapping(
                 ref_counts=ref_data.loc[:, gg],
@@ -371,8 +361,6 @@ def __main__(
                 knn=knn,
                 write_assignment_dataframe=coord_dir.joinpath(query_path.name))
             assignments += [pd.concat([corr, cell_type, coords], axis=1)]
-            print(assignments[-1])
-            return None
 
         # index is cell id, cols high score, dataset_id, cbc, celltype, 2 umap
         assignments = pd.concat(assignments)
