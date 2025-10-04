@@ -274,13 +274,11 @@ def __main__(
     """"""
     """prepare reference dataset and output paths"""
     corr_dir = out_dir.joinpath("corr_scores")
-    corr_dir.mkdir(exist_ok=True, parents=True)
     centroid_dir = out_dir.joinpath("centroid_assignments")
-    centroid_dir.mkdir(exist_ok=True, parents=True)
     coord_dir = out_dir.joinpath("umap_coordinates")
-    coord_dir.mkdir(exist_ok=True, parents=True)
     plot_dir = out_dir.joinpath("umap_plots")
-    plot_dir.mkdir(exist_ok=True, parents=True)
+    for subdir in (corr_dir, centroid_dir, coord_dir, plot_dir):
+        subdir.mkdir(exist_ok=True, parents=True)
 
     # extract relevant genes from reference file
     ref_genes_path = ref_dir.joinpath("ref_var_genes.csv")
@@ -289,6 +287,10 @@ def __main__(
     # Load in reference variable genes, metadata, and sparse matrix
     ref_metadata_path = ref_dir.joinpath("wang_metadata.csv")
     ref_metadata = pd.read_csv(ref_metadata_path, index_col=0)
+
+    # clean up cell ids to match those in raw data file
+    ref_metadata.index = ref_metadata.index.to_series().str.replace(
+        r'[^0-9A-Za-z]', '_', regex=True).str.upper()
     ref_metadata['dataset_id'] = "wang et al"
 
     # only load relevant genes from reference dataset
@@ -299,7 +301,11 @@ def __main__(
         counts = None
         for chunk in track(
                 pd.read_csv(ref_counts_path, index_col=0, chunksize=step),
-                description="loading..."):
+                description="loading...", total=None):
+            # clean up cell ids to match those in metadata file
+            chunk.columns = chunk.columns.to_series().str.replace(
+                r'[^0-9A-Za-z]', '_', regex=True).str.upper()
+
             # Revert ref_data transformed with log1p
             chunk = np.expm1(chunk)  # gene x cell matrix
 
@@ -307,23 +313,25 @@ def __main__(
             chunk_sum = chunk.sum(axis=0, numeric_only=True)
             counts = chunk_sum if counts is None else counts + chunk_sum
 
-            # filter to only variable genes
-            chunk = chunk.loc[chunk.index.isin(ref_variable_genes)]
+            # filter to only variable genes, cells with metadata
+            chunk = chunk.loc[
+                chunk.index.isin(ref_variable_genes),
+                chunk.columns.intersection(ref_metadata.index)]
             ref_data += [chunk]
 
-        # concat chunked raw data, normalize
+        # concat chunked raw data, normalize, save
         print('Normalizing sample matrix to sequencing depth per cell')
-        ref_data = normalize_counts(
-            pd.concat(ref_data), scalar=scale_factor,
-            norm_seq_depth=norm_seq_depth, gene_x_cell=True, log=True)
-
-        # filter to cells in both count matrix and reference metadata
-        ref_data.loc[ref_data.index.intersection(ref_metadata.index)].to_csv(
+        normalize_counts(
+            pd.concat(ref_data), counts=counts, scalar=scale_factor,
+            norm_seq_depth=norm_seq_depth, gene_x_cell=True, log=True).to_csv(
             filtered_path)
 
     # convert to cell x gene matrix
     ref_data = pd.read_csv(filtered_path, index_col=0).T
-    print(ref_data.shape)
+    print(chunk)
+    print(ref_data)
+    import sys;
+    sys.exit()
 
     """run centroid_mapping, calculate_embeddings on each query dataset"""
     assignment_path = out_dir.joinpath("mapped_centroids.csv")
