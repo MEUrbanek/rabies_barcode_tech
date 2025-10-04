@@ -353,9 +353,6 @@ def __main__(
                 ref_metadata=ref_metadata,
                 write_assignment_df=centroid_dir.joinpath(query_path.name),
                 write_corr_scores_df=corr_dir.joinpath(query_path.name))
-            print(corr)
-            print(cell_type)
-            return None
 
             # get peak correlation for each cell
             corr = corr.max(axis=1).to_frame(name='high_score')
@@ -376,6 +373,8 @@ def __main__(
                 knn=knn,
                 write_assignment_dataframe=coord_dir.joinpath(query_path.name))
             assignments += [pd.concat([corr, cell_type, coords], axis=1)]
+            print(assignments[-1])
+            return None
 
         # index is cell id, cols high score, dataset_id, cbc, celltype, 2 umap
         assignments = pd.concat(assignments)
