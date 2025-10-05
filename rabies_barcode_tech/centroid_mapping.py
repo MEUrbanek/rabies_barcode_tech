@@ -434,8 +434,10 @@ def __main__(
     sns.violinplot(
         data=assignments, x='dataset_id', y='high_score', hue='dataset_id',
         legend=False, alpha=0.5)  #palette=dataset_palette)
-    plt.show()
-
+    plt.savefig(
+        plot_dir.joinpath('peak correlations.png'), dpi=300,
+        bbox_inches='tight')
+    plt.clf()
     # Drop all rows where high_score is <0.2
     total_cells = assignments.shape[0]
     assignments = assignments.query('high_score >= 0.2')
@@ -449,11 +451,11 @@ def __main__(
             ref_metadata['type_updated'].unique(), description='plot...'):
         fig, ax = plt.subplots(figsize=(6, 6))
         sns.scatterplot(
-            data=ref_metadata.query(f'type_updated == {cell_type}'),
+            data=ref_metadata[ref_metadata['type_updated'] == cell_type],
             x=umap_cols[0], y=umap_cols[1], ax=ax, s=1, marker='.',
             legend=False, color="black")
         sns.scatterplot(
-            data=assignments.query(f'type_updated == {cell_type}'),
+            data=assignments[assignments['type_updated'] == cell_type],
             x=umap_cols[0], y=umap_cols[1], hue='dataset_id', ax=ax, s=1,
             marker='.', alpha=0.3, legend=True)
         plt.title(cell_type)
