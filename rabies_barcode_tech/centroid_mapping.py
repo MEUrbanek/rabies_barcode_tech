@@ -422,7 +422,7 @@ def __main__(
         for k, v in mapping.items():
             assignments.loc[assignments['dataset_id'].isin(v), 'cbc'] = k
 
-        assignments.to_csv(out_dir.joinpath('filtered_assignments.csv'))
+        assignments.to_csv(assignment_path)
 
     # plot high score distribution
     assignments = pd.read_csv(assignment_path)
