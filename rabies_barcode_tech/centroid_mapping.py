@@ -448,12 +448,12 @@ def __main__(
         fig, ax = plt.subplots(figsize=(6, 6))
         sns.scatterplot(
             data=ref_metadata[ref_metadata['type_updated'] == cell_type],
-            x=umap_cols[0], y=umap_cols[1], ax=ax, s=1, marker='.',
+            x=umap_cols[0], y=umap_cols[1], ax=ax, s=3, marker='.',
             legend=False, color="black")
         sns.scatterplot(
             data=assignments[assignments['celltype'] == cell_type],
-            x=umap_cols[0], y=umap_cols[1], hue='dataset_id', ax=ax, s=1,
-            marker='.', alpha=0.3, legend=True)
+            x=umap_cols[0], y=umap_cols[1], hue='dataset_id', ax=ax, s=3,
+            marker='.', alpha=0.75, legend=True)
         plt.title(cell_type)
         plt.savefig(
             plot_dir.joinpath(f"{cell_type}.png"), dpi=300,
