@@ -299,25 +299,26 @@ def __main__(
     for subdir in (corr_dir, centroid_dir, coord_dir, plot_dir):
         subdir.mkdir(exist_ok=True, parents=True)
 
-    # extract relevant genes from reference file
-    ref_genes_path = ref_dir.joinpath("ref_var_genes.csv")
-    ref_variable_genes = pd.read_csv(ref_genes_path, usecols=['x'])['x']
+    filtered_path = out_dir.joinpath("filtered_normed_wang_ref.csv")
+    assignment_path = out_dir.joinpath("mapped_centroids.csv")
 
-    # Load in reference variable genes, metadata, and sparse matrix
-    ref_metadata_path = ref_dir.joinpath("wang_metadata.csv")
-    ref_metadata = pd.read_csv(ref_metadata_path, index_col=0)
+    # extract relevant genes and metadata from reference files
+    ref_variable_genes = pd.read_csv(
+        ref_dir.joinpath("ref_var_genes.csv"), usecols=['x'])['x']
+    ref_metadata = pd.read_csv(
+        ref_dir.joinpath("wang_metadata.csv"), index_col=0)
 
     # clean up cell ids to match those in raw data file
     ref_metadata.index = format_str_index(ref_metadata.index)
     ref_metadata['dataset_id'] = "wang et al"
 
     # only load relevant genes from reference dataset
-    filtered_path = out_dir.joinpath("filtered_normed_wang_ref.csv")
+    print(f'\nReference dataset file available? {filtered_path.is_file()}')
     if not filtered_path.is_file():
-        print('loading and filtering reference dataset from raw counts')
         ref_data = []
         ref_counts_path = ref_dir.joinpath("wang_ref.csv")
         counts = None
+        start_time = time.time()
         for chunk in track(  # gene x cell matrix
                 pd.read_csv(ref_counts_path, index_col=0, chunksize=step),
                 description='    loading...', total=None):
@@ -336,24 +337,25 @@ def __main__(
             ref_data += [chunk]
 
         # concat chunked raw data, normalize, save
-        print('    Normalizing reference matrix to sequencing depth per cell')
+        print(f'    load time: {time.time() - start_time:.2f}s')
+        start_time = time.time()
         normalize_counts(
             pd.concat(ref_data), counts=counts, scalar=scale_factor,
             norm_seq_depth=norm_seq_depth, gene_x_cell=True, log=True).to_csv(
             filtered_path)
+        print(f'    norm time: {time.time() - start_time:.2f}s')
 
-    # convert to cell x gene matrix
+    # load and convert to cell x gene matrix
     ref_data = pd.read_csv(filtered_path, index_col=0).T
-    print(f'reference cell count: {ref_data.shape[0]}')
+    print(f'\nreference cell count: {ref_data.shape[0]}')
     print(f'variable genes count: {ref_data.shape[1]}')
 
     """run centroid_mapping, calculate_embeddings on each query dataset"""
-    assignment_path = out_dir.joinpath("mapped_centroids.csv")
     if not assignment_path.is_file():
         assignments = []
         logging = {}
         for query_path in track(
-                new_dir.glob('[!.]*.csv'), description="mapping..."):
+                list(new_dir.glob('[!.]*.csv')), description="mapping..."):
             """Prepare query dataset"""
             query_data = normalize_counts(
                 pd.read_csv(query_path, index_col=0),  # index is gene
