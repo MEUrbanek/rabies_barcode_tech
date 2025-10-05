@@ -434,7 +434,7 @@ def __main__(
     plt.savefig(
         plot_dir.joinpath('peak correlations.png'), dpi=300,
         bbox_inches='tight')
-    plt.clf()
+    plt.close()
     # Drop all rows where high_score is <0.2
     total_cells = assignments.shape[0]
     assignments = assignments.query('high_score >= 0.2')
@@ -445,7 +445,7 @@ def __main__(
     # plot cell type umaps
     for cell_type in track(
             ref_metadata['type_updated'].unique(), description='plot...'):
-        fig, ax = plt.subplots(figsize=(6, 6))
+        _, ax = plt.subplots(figsize=(6, 6))
         sns.scatterplot(
             data=ref_metadata[ref_metadata['type_updated'] == cell_type],
             x=umap_cols[0], y=umap_cols[1], ax=ax, s=3, marker='.',
@@ -458,7 +458,7 @@ def __main__(
         plt.savefig(
             plot_dir.joinpath(f"{cell_type}.png"), dpi=300,
             bbox_inches="tight")
-        plt.clf()
+        plt.close()
 
 
 if __name__ == '__main__':
