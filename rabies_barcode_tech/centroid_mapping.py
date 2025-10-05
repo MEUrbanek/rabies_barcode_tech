@@ -301,9 +301,6 @@ def __main__(
 
     filtered_path = out_dir.joinpath("filtered_normed_wang_ref.csv")
     assignment_path = out_dir.joinpath("mapped_centroids.csv")
-    print(assignment_path.is_file())
-    print(out_dir.joinpath("filtered_assignments.csv").is_file())
-    import sys; sys.exit()
 
     # extract relevant genes and metadata from reference files
     ref_variable_genes = pd.read_csv(
