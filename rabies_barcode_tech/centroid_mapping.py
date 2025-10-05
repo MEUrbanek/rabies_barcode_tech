@@ -16,10 +16,10 @@ from pathlib import Path
 from rich.table import Table
 from rich.console import Console
 from rich.progress import track
-from rich.traceback import install
-
-
-install(show_locals=True, width=120)
+# from rich.traceback import install
+#
+#
+# install(show_locals=True, width=120)
 
 
 def corr2(
