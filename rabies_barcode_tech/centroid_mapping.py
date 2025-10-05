@@ -428,7 +428,7 @@ def __main__(
             marker='.', legend=False, color="black")
         sns.scatterplot(
             data=assignments[assignments['dataset_id'] == dset],
-            x=umap_cols[0], y=umap_cols[1], hue='dataset_id', ax=ax, s=5,
+            x=umap_cols[0], y=umap_cols[1], hue='celltype', ax=ax, s=5,
             marker='.', alpha=0.9, legend=True)
         ax.set_aspect("equal", adjustable="box")
         ax.legend(
