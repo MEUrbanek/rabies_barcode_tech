@@ -438,10 +438,9 @@ def __main__(
     # Drop all rows where high_score is <0.2
     total_cells = assignments.shape[0]
     assignments = assignments.query('high_score >= 0.2')
-    print(f'Number of cells pre-thresholding: {total_cells}')
+    print(f'\nNumber of cells pre-thresholding: {total_cells}')
     print(f'Number of cells post-thresholding: {assignments.shape[0]}')
-    print('Percentage of cells retained for analysis:')
-    print(f'{100 * assignments.shape[0] / total_cells:.2f}%')
+    print(f'Percentage: {100 * assignments.shape[0] / total_cells:.2f}%')
 
     # plot cell type umaps
     for cell_type in track(
@@ -452,7 +451,7 @@ def __main__(
             x=umap_cols[0], y=umap_cols[1], ax=ax, s=1, marker='.',
             legend=False, color="black")
         sns.scatterplot(
-            data=assignments[assignments['type_updated'] == cell_type],
+            data=assignments[assignments['celltype'] == cell_type],
             x=umap_cols[0], y=umap_cols[1], hue='dataset_id', ax=ax, s=1,
             marker='.', alpha=0.3, legend=True)
         plt.title(cell_type)
