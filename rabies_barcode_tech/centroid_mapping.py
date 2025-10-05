@@ -428,7 +428,7 @@ def __main__(
     print(f'Percentage: {100 * assignments.shape[0] / total_cells:.2f}%')
 
     # plot cell types on umap
-    unique = assignments['dataset_id'].unique()
+    unique = ref_metadata['type_updated'].unique()
     hue_map = dict(
         zip(unique, sns.color_palette("rocket", len(unique))))
     kwargs = {
