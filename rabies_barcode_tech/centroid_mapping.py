@@ -149,7 +149,6 @@ def centroid_mapping(
         ref_counts,
         new_counts,
         ref_metadata,
-        write_assignment_df: Path,
         write_corr_scores_df: Path,
         step: int = 1_000
 ):
@@ -163,8 +162,6 @@ def centroid_mapping(
         sparse sample matrix. Normalized and filtered to relevant genes.
         cell x gene matrix.
     ref_metadata :
-    write_assignment_df : Path
-        where to save cell type assignment dataframe to on local machine
     write_corr_scores_df : Path
         where to save correlation coefficient matrix on local machine
     step : int, optional
@@ -174,12 +171,6 @@ def centroid_mapping(
     corr_Scores : pd.DataFrame
     type_assignment : pd.DataFrame
     """
-    if write_assignment_df.is_file() and write_corr_scores_df.is_file():
-        corr_scores = pd.read_csv(write_corr_scores_df, index_col=0)
-        type_assignment = pd.read_csv(
-            write_assignment_df, index_col=0).squeeze()
-        return corr_scores, type_assignment
-
     # add cell type column
     ref_counts['type_updated'] = ref_metadata.loc[
         ref_counts.index, 'type_updated']
@@ -201,7 +192,6 @@ def centroid_mapping(
     # Assign clusters based on highest value concordance (excluding any NaNs)
     type_assignment = corr_scores.idxmax(axis='columns').to_frame(
         name='celltype')
-    type_assignment.to_csv(write_assignment_df)
     return corr_scores, type_assignment
 
 
@@ -212,7 +202,6 @@ def calculate_embeddings(
         umap_cols,
         use_median: bool = True,
         knn: int = 10,
-        write_assignment_dataframe: Path = None,
         step: int = 1_000
 ):
     """
@@ -232,17 +221,12 @@ def calculate_embeddings(
         embeddings
     knn : int, optional
         number of neighbors to consider when selecting median/weighted mean
-    write_assignment_dataframe : Path, optional
-        where to save assignment dataframe to on local machine
     step : int, optional
 
     Returns
     -------
     assignment_positions : pd.DataFrame
     """
-    if write_assignment_dataframe.is_file():
-        return pd.read_csv(write_assignment_dataframe, index_col=0)
-
     # chunk over cells in new dataset
     assignment_positions = {}
     for i in range(0, new_counts.shape[0], step):
@@ -273,9 +257,6 @@ def calculate_embeddings(
 
     assignment_positions = pd.DataFrame.from_dict(
         assignment_positions, orient="index", columns=list(umap_cols))
-
-    # Save output to local machine
-    assignment_positions.to_csv(write_assignment_dataframe)
     return assignment_positions
 
 
@@ -287,16 +268,14 @@ def __main__(
         scale_factor: float = 10_000,
         norm_seq_depth: bool = True,
         use_median: bool = True,
-        knn: int = 10,
+        knn: int = 1,
         step: int = 1_000
 ):
     """"""
     """prepare reference dataset and output paths"""
     corr_dir = out_dir.joinpath("corr_scores")
-    centroid_dir = out_dir.joinpath("centroid_assignments")
-    coord_dir = out_dir.joinpath("umap_coordinates")
     plot_dir = out_dir.joinpath("umap_plots")
-    for subdir in (corr_dir, centroid_dir, coord_dir, plot_dir):
+    for subdir in (corr_dir, plot_dir):
         subdir.mkdir(exist_ok=True, parents=True)
 
     filtered_path = out_dir.joinpath("filtered_normed_wang_ref.csv")
@@ -351,82 +330,80 @@ def __main__(
     print(f'variable genes count: {ref_data.shape[1]}')
 
     """run centroid_mapping, calculate_embeddings on each query dataset"""
-    if not assignment_path.is_file():
-        assignments = []
-        logging = {}
-        for query_path in track(
-                list(new_dir.glob('[!.]*.csv')), description="mapping..."):
-            """Prepare query dataset"""
-            query_data = normalize_counts(
-                pd.read_csv(query_path, index_col=0),  # index is gene
-                scalar=scale_factor, norm_seq_depth=norm_seq_depth,
-                gene_x_cell=True, log=True).T  # index is cell
+    assignments = []
+    logging = {}
+    for query_path in track(
+            list(new_dir.glob('[!.]*.csv')), description="mapping..."):
+        """Prepare query dataset"""
+        query_data = normalize_counts(
+            pd.read_csv(query_path, index_col=0),  # index is gene
+            scalar=scale_factor, norm_seq_depth=norm_seq_depth,
+            gene_x_cell=True, log=True).T  # index is cell
 
-            # Identify overlapping genes between reference and query datasets
-            gg = ref_data.columns.intersection(query_data.columns)
-            query_data = query_data.loc[:, gg]
+        # Identify overlapping genes between reference and query datasets
+        gg = ref_data.columns.intersection(query_data.columns)
+        query_data = query_data.loc[:, gg]
 
-            # map centroids
-            centroid_time = time.time()
-            corr, cell_type = centroid_mapping(
-                ref_counts=ref_data.loc[:, gg],
-                new_counts=query_data,
-                ref_metadata=ref_metadata,
-                write_assignment_df=centroid_dir.joinpath(query_path.name),
-                write_corr_scores_df=corr_dir.joinpath(query_path.name))
-            centroid_time = time.time() - centroid_time
+        # map centroids
+        centroid_time = time.time()
+        corr, cell_type = centroid_mapping(
+            ref_counts=ref_data.loc[:, gg],
+            new_counts=query_data,
+            ref_metadata=ref_metadata,
+            write_corr_scores_df=corr_dir.joinpath(query_path.name))
+        centroid_time = time.time() - centroid_time
 
-            # get peak correlation for each cell
-            corr = corr.max(axis=1).to_frame(name='high_score')
-            corr[['dataset_id', 'cbc']] = corr.index.to_series().str.split(
-                '_', n=1, expand=True)
+        # get peak correlation for each cell
+        corr = corr.max(axis=1).to_frame(name='high_score')
+        corr[['dataset_id', 'cbc']] = corr.index.to_series().str.split(
+            '_', n=1, expand=True)
 
-            # add dataset id to cluster assignments
-            name = query_path.stem
-            corr['datasetid'] = name.split('_')[0] if '_' in name else name
+        # add dataset id to cluster assignments
+        name = query_path.stem
+        corr['datasetid'] = name.split('_')[0] if '_' in name else name
 
-            # extract umap coordinates
-            embedding_time = time.time()
-            coords = calculate_embeddings(
-                ref_counts=ref_data.loc[:, gg],
-                new_counts=query_data,
-                ref_umap=ref_metadata,
-                umap_cols=umap_cols,
-                use_median=use_median,
-                knn=knn,
-                write_assignment_dataframe=coord_dir.joinpath(query_path.name))
-            embedding_time = time.time() - embedding_time
-            assignments += [pd.concat([corr, cell_type, coords], axis=1)]
+        # extract umap coordinates
+        embedding_time = time.time()
+        coords = calculate_embeddings(
+            ref_counts=ref_data.loc[:, gg],
+            new_counts=query_data,
+            ref_umap=ref_metadata,
+            umap_cols=umap_cols,
+            use_median=use_median,
+            knn=knn)
+        embedding_time = time.time() - embedding_time
+        assignments += [pd.concat([corr, cell_type, coords], axis=1)]
 
-            # look data from current loop
-            logging[query_path.name] = (len(gg), centroid_time, embedding_time)
+        # look data from current loop
+        logging[query_path.name] = (len(gg), centroid_time, embedding_time)
 
-        # print logged metadata
-        table = Table(title="Mapping Summary")
-        table.add_column("dataset", style="bold cyan")
-        table.add_column("n genes", style="magenta")
-        table.add_column("t_centroid sec", style="green")
-        table.add_column("t_embedding sec", style="green")
-        for d, (g, t_c, t_e) in logging.items():
-            table.add_row(d, str(g), f"{t_c:.2f}", f"{t_e:.2f}")
+    # print logged metadata
+    table = Table(title="Mapping Summary")
+    table.add_column("dataset", style="bold cyan")
+    table.add_column("n genes", style="magenta")
+    table.add_column("t_centroid sec", style="green")
+    table.add_column("t_embedding sec", style="green")
+    for d, (g, t_c, t_e) in logging.items():
+        table.add_row(d, str(g), f"{t_c:.2f}", f"{t_e:.2f}")
 
-        Console().print(table)
+    Console().print(table)
 
-        # index is cell id, cols high score, dataset_id, cbc, celltype, 2 umap
-        assignments = pd.concat(assignments)
-        mapping = {  # desired label: [dataset_ids]
-            'SADB-19 cell': ['s1', 's2', 's3', 's4', 's5'],
-            'CVS-N2c cell': ['c1', 'c2', 'c3', 'c4'],
-            'CVS-N2c nuc': ['n1', 'n2', 'n3', 'n4'],
-            'Uninfected cell': ['u1'], 'Uninfected nuc': ['u2']}
-        for k, v in mapping.items():
-            assignments.loc[assignments['dataset_id'].isin(v), 'cbc'] = k
+    # index is cell id, cols high score, dataset_id, cbc, celltype, 2 umap
+    assignments = pd.concat(assignments)
+    mapping = {  # desired label: [dataset_ids]
+        'SADB-19 cell': ['s1', 's2', 's3', 's4', 's5'],
+        'CVS-N2c cell': ['c1', 'c2', 'c3', 'c4'],
+        'CVS-N2c nuc': ['n1', 'n2', 'n3', 'n4'],
+        'Uninfected cell': ['u1'], 'Uninfected nuc': ['u2']}
+    for k, v in mapping.items():
+        assignments.loc[assignments['dataset_id'].isin(v), 'cbc'] = k
 
-        assignments.to_csv(assignment_path)
+    assignments.to_csv(assignment_path)
 
     # plot high score distribution
-    assignments = pd.read_csv(assignment_path)
-    plt.figure(figsize=(10, 5))
+    sns.set_theme(style="ticks", rc={
+        "axes.spines.right": False, "axes.spines.top": False})
+    plt.figure(figsize=(12, 6))
     plt.xticks(rotation=45)
     sns.violinplot(
         data=assignments, x='dataset_id', y='high_score', hue='dataset_id',
@@ -443,20 +420,23 @@ def __main__(
     print(f'Percentage: {100 * assignments.shape[0] / total_cells:.2f}%')
 
     # plot cell type umaps
-    for cell_type in track(
-            ref_metadata['type_updated'].unique(), description='plot...'):
-        _, ax = plt.subplots(figsize=(6, 6))
+    for dset in track(
+            assignments['dataset_id'].unique(), description='plot...'):
+        _, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
         sns.scatterplot(
-            data=ref_metadata[ref_metadata['type_updated'] == cell_type],
-            x=umap_cols[0], y=umap_cols[1], ax=ax, s=3, marker='.',
-            legend=False, color="black")
+            data=ref_metadata, x=umap_cols[0], y=umap_cols[1], ax=ax, s=3,
+            marker='.', legend=False, color="black")
         sns.scatterplot(
-            data=assignments[assignments['celltype'] == cell_type],
-            x=umap_cols[0], y=umap_cols[1], hue='dataset_id', ax=ax, s=3,
-            marker='.', alpha=0.75, legend=True)
-        plt.title(cell_type)
+            data=assignments[assignments['dataset_id'] == dset],
+            x=umap_cols[0], y=umap_cols[1], hue='dataset_id', ax=ax, s=5,
+            marker='.', alpha=0.9, legend=True)
+        ax.set_aspect("equal", adjustable="box")
+        ax.legend(
+            bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.,
+            frameon=False, ncol=2)
+        plt.title(dset)
         plt.savefig(
-            plot_dir.joinpath(f"{cell_type}.png"), dpi=300,
+            plot_dir.joinpath(f"{dset} dataset.png"), dpi=300,
             bbox_inches="tight")
         plt.close()
 
