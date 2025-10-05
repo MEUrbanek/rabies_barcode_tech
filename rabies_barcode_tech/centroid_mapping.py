@@ -429,12 +429,12 @@ def __main__(
 
     # plot cell types on umap
     unique = ref_metadata['type_updated'].unique()
-    hue_map = dict(
-        zip(unique, sns.color_palette("rocket", len(unique))))
+    hue_map = dict(zip(unique, sns.color_palette(n_colors=len(unique))))
     kwargs = {
         'legend': False, 'palette': hue_map, 'hue_order': unique, 's': 5,
         'marker': '.'}
-    for dset in track(unique, description='plot...'):
+    for dset in track(
+            assignments['dataset_id'].unique(), description='plot...'):
         fig, axes = plt.subplots(
             nrows=2, sharex=True, sharey=True, figsize=(6, 12),
             constrained_layout=True)
