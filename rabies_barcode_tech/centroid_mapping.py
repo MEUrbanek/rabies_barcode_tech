@@ -268,7 +268,7 @@ def __main__(
         scale_factor: float = 10_000,
         norm_seq_depth: bool = True,
         use_median: bool = True,
-        knn: int = 1,
+        knn: int = 5,
         step: int = 1_000
 ):
     """"""
@@ -279,6 +279,7 @@ def __main__(
         subdir.mkdir(exist_ok=True, parents=True)
 
     filtered_path = out_dir.joinpath("filtered_normed_wang_ref.csv")
+    total_gene_path = out_dir.joinpath("filtered_common_genes.csv")
     assignment_path = out_dir.joinpath("mapped_centroids.csv")
 
     # extract relevant genes and metadata from reference files
@@ -326,6 +327,7 @@ def __main__(
 
     # load and convert to cell x gene matrix
     ref_data = pd.read_csv(filtered_path, index_col=0).T
+    common_genes = ref_data.columns
     print(f'\nreference cell count: {ref_data.shape[0]}')
     print(f'variable genes count: {ref_data.shape[1]}')
 
@@ -343,6 +345,7 @@ def __main__(
         # Identify overlapping genes between reference and query datasets
         gg = ref_data.columns.intersection(query_data.columns)
         query_data = query_data.loc[:, gg]
+        common_genes = common_genes.intersection(gg)
 
         # map centroids
         centroid_time = time.time()
@@ -376,6 +379,10 @@ def __main__(
 
         # look data from current loop
         logging[query_path.name] = (len(gg), centroid_time, embedding_time)
+
+    # save list of common genes as csv
+    print(f'common genes across all datasets: {len(common_genes)}')
+    common_genes.to_series().to_csv(total_gene_path, index=False, header=False)
 
     # print logged metadata
     table = Table(title="Mapping Summary")
@@ -412,6 +419,7 @@ def __main__(
         plot_dir.joinpath('peak correlations.png'), dpi=300,
         bbox_inches='tight')
     plt.close()
+
     # Drop all rows where high_score is <0.2
     total_cells = assignments.shape[0]
     assignments = assignments.query('high_score >= 0.2')
@@ -419,22 +427,27 @@ def __main__(
     print(f'Number of cells post-thresholding: {assignments.shape[0]}')
     print(f'Percentage: {100 * assignments.shape[0] / total_cells:.2f}%')
 
-    # plot cell type umaps
+    # plot cell types on umap
     for dset in track(
             assignments['dataset_id'].unique(), description='plot...'):
-        _, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+        fig, axes = plt.subplots(
+            nrows=2, sharex=True, figsize=(8, 12), constrained_layout=True)
         sns.scatterplot(
-            data=ref_metadata, x=umap_cols[0], y=umap_cols[1], ax=ax, s=3,
-            marker='.', legend=False, color="black")
+            data=ref_metadata, x=umap_cols[0], y=umap_cols[1],
+            hue='type_updated', ax=axes[0], s=5, marker='.', legend=False)
         sns.scatterplot(
             data=assignments[assignments['dataset_id'] == dset],
-            x=umap_cols[0], y=umap_cols[1], hue='celltype', ax=ax, s=5,
+            x=umap_cols[0], y=umap_cols[1], hue='celltype', ax=axes[1], s=5,
             marker='.', alpha=0.9, legend=True)
-        ax.set_aspect("equal", adjustable="box")
-        ax.legend(
-            bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.,
-            frameon=False, ncol=2)
-        plt.title(dset)
+        for ax, t in zip(axes, ("reference", dset)):
+            ax.set_title(t)
+            ax.set_aspect("equal", adjustable="box")
+
+        fig.legend(
+            *axes[1].get_legend_handles_labels(), bbox_to_anchor=(1.05, 1),
+            loc='upper left', frameon=False, ncol=1)
+        axes[1].legend_.remove()
+        plt.subplots_adjust(right=0.8)
         plt.savefig(
             plot_dir.joinpath(f"{dset} dataset.png"), dpi=300,
             bbox_inches="tight")
