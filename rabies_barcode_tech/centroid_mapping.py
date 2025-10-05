@@ -428,26 +428,26 @@ def __main__(
     print(f'Percentage: {100 * assignments.shape[0] / total_cells:.2f}%')
 
     # plot cell types on umap
-    for dset in track(
-            assignments['dataset_id'].unique(), description='plot...'):
+    unique = assignments['dataset_id'].unique()
+    hue_map = dict(
+        zip(unique, sns.color_palette("rocket", len(unique))))
+    kwargs = {
+        'legend': False, 'palette': hue_map, 'hue_order': unique, 's': 5,
+        'marker': '.'}
+    for dset in track(unique, description='plot...'):
         fig, axes = plt.subplots(
-            nrows=2, sharex=True, figsize=(8, 12), constrained_layout=True)
+            nrows=2, sharex=True, sharey=True, figsize=(6, 12),
+            constrained_layout=True)
         sns.scatterplot(
             data=ref_metadata, x=umap_cols[0], y=umap_cols[1],
-            hue='type_updated', ax=axes[0], s=5, marker='.', legend=False)
+            hue='type_updated', ax=axes[0], **kwargs)
         sns.scatterplot(
             data=assignments[assignments['dataset_id'] == dset],
-            x=umap_cols[0], y=umap_cols[1], hue='celltype', ax=axes[1], s=5,
-            marker='.', alpha=0.9, legend=True)
+            x=umap_cols[0], y=umap_cols[1], hue='celltype', ax=axes[1],
+            **kwargs)
         for ax, t in zip(axes, ("reference", dset)):
             ax.set_title(t)
-            ax.set_aspect("equal", adjustable="box")
 
-        fig.legend(
-            *axes[1].get_legend_handles_labels(), bbox_to_anchor=(1.05, 1),
-            loc='upper left', frameon=False, ncol=1)
-        axes[1].legend_.remove()
-        plt.subplots_adjust(right=0.8)
         plt.savefig(
             plot_dir.joinpath(f"{dset} dataset.png"), dpi=300,
             bbox_inches="tight")
