@@ -70,6 +70,31 @@ def corr_2_matrix(
     return corr_matrix
 
 
+def format_str_index(
+        index,
+        replace: str = '_'
+):
+    """Format string index values to uppercase alphanumeric characters.
+
+    Parameters
+    ----------
+    index : pd.Index | pd.Series
+        Index of labels to format as strings.
+    replace : str, optional
+        Character used to replace non-alphanumeric characters in `index`.
+        Defaults to '_'.
+
+    Returns
+    -------
+    formatted_index : pd.Series
+        `index` with non-alphanumeric characters replaced with `replace` and
+        other characters converted to uppercase.
+    """
+    formatted_index = index.to_series().str.replace(
+        r'[^0-9A-Za-z]', replace, regex=True).str.upper()
+    return formatted_index
+
+
 def normalize_counts(
         count_matrix: pd.DataFrame,
         counts: pd.Series = None,
@@ -283,25 +308,22 @@ def __main__(
     ref_metadata = pd.read_csv(ref_metadata_path, index_col=0)
 
     # clean up cell ids to match those in raw data file
-    ref_metadata.index = ref_metadata.index.to_series().str.replace(
-        r'[^0-9A-Za-z]', '_', regex=True).str.upper()
+    ref_metadata.index = format_str_index(ref_metadata.index)
     ref_metadata['dataset_id'] = "wang et al"
 
     # only load relevant genes from reference dataset
     filtered_path = out_dir.joinpath("filtered_normed_wang_ref.csv")
     if not filtered_path.is_file():
+        print('loading and filtering reference dataset from raw counts')
         ref_data = []
         ref_counts_path = ref_dir.joinpath("wang_ref.csv")
         counts = None
-        for chunk in track(
+        for chunk in track(  # gene x cell matrix
                 pd.read_csv(ref_counts_path, index_col=0, chunksize=step),
-                description="loading...", total=None):
-            # clean up cell ids to match those in metadata file
-            chunk.columns = chunk.columns.to_series().str.replace(
-                r'[^0-9A-Za-z]', '_', regex=True).str.upper()
-
-            # Revert ref_data transformed with log1p
-            chunk = np.expm1(chunk)  # gene x cell matrix
+                description='    loading...', total=None):
+            # clean cell ids, revert ref_data transformed with log1p
+            chunk = np.expm1(chunk)
+            chunk.columns = format_str_index(chunk.columns)
 
             # keep running total of UMI counts per cell, for all genes
             chunk_sum = chunk.sum(axis=0, numeric_only=True)
@@ -314,7 +336,7 @@ def __main__(
             ref_data += [chunk]
 
         # concat chunked raw data, normalize, save
-        print('Normalizing reference matrix to sequencing depth per cell')
+        print('    Normalizing reference matrix to sequencing depth per cell')
         normalize_counts(
             pd.concat(ref_data), counts=counts, scalar=scale_factor,
             norm_seq_depth=norm_seq_depth, gene_x_cell=True, log=True).to_csv(
@@ -384,7 +406,7 @@ def __main__(
         table.add_column("t_centroid sec", style="green")
         table.add_column("t_embedding sec", style="green")
         for d, (g, t_c, t_e) in logging.items():
-            table.add_row(d, g, f"{t_c:.2f}", f"{t_e:.2f}")
+            table.add_row(d, str(g), f"{t_c:.2f}", f"{t_e:.2f}")
 
         Console().print(table)
 
