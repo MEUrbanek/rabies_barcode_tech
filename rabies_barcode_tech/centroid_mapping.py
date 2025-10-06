@@ -455,11 +455,7 @@ def __main__(
 
 
 if __name__ == '__main__':
-    REF_DIR = Path(
-        "/Users/ikogbonna/Documents/Lab/Cadwell Lab/Data/barcoded_tech_data")
-    if not REF_DIR.is_dir():
-        REF_DIR = Path("/data/scratch/ike/barcoded_tech_data")
-
+    REF_DIR = Path("/data/scratch/ike/barcoded_tech_data")
     __main__(
         ref_dir=REF_DIR.joinpath("wang_ref_atlas"),
         new_dir=REF_DIR.joinpath("sparse_matrices"),
