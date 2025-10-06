@@ -16,10 +16,6 @@ from pathlib import Path
 from rich.table import Table
 from rich.console import Console
 from rich.progress import track
-# from rich.traceback import install
-#
-#
-# install(show_locals=True, width=120)
 
 
 def corr2(
@@ -42,9 +38,9 @@ def corr_2_matrix(
     Parameters
     ----------
     a : np.ndarray
-        2d array to correlate. Has shape (samples_a, observations)
+        2d array to correlate. Has shape (samples_a, observations).
     b : np.ndarray
-        Another 2d array to correlate. Has shape (samples_b, observations)
+        Another 2d array to correlate. Has shape (samples_b, observations).
 
     Returns
     -------
@@ -118,6 +114,9 @@ def normalize_counts(
         Scale factor with which to adjust normalized counts.
         Defaults to None, in which case counts are not scaled.
     norm_seq_depth : bool, optional
+        If True, normalize counts to total UMIs per cell and scale output
+        values by `scalar`.
+        Defaults to False.
     gene_x_cell : bool, optional
         If True, `count_matrix` is a [gene, cell] matrix. If False,
         `count_matrix` is a [cell, gene] matrix.
@@ -128,11 +127,6 @@ def normalize_counts(
     -------
     new_counts : pd.DataFrame
         `count_matrix` normalized to total UMI counts per cell and scaled.
-
-    Notes
-    -----
-    Genes counts for each cell are divided by the total UMIs for that cell,
-    then multiplied by a scale factor.
     """
     new_counts = counts
     if norm_seq_depth:
@@ -150,20 +144,25 @@ def centroid_mapping(
         new_counts,
         ref_metadata,
         write_corr_scores_df: Path,
+        type_col: str = 'type_updated',
         step: int = 1_000
 ):
     """
     Parameters
     ----------
-    ref_counts :
-        sparse reference matrix. Normalized and filtered to relevant genes.
-        cell x gene matrix.
-    new_counts :
-        sparse sample matrix. Normalized and filtered to relevant genes.
-        cell x gene matrix.
-    ref_metadata :
+    ref_counts : pd.DataFrame
+        Sparse reference matrix. Normalized and filtered to relevant genes.
+        Cell x gene matrix.
+    new_counts : pd.DataFrame
+        Sparse sample matrix. Normalized and filtered to relevant genes.
+        Cell x gene matrix.
+    ref_metadata : pd.DataFrame
+        Metadata associated with cells in `ref_counts`.
     write_corr_scores_df : Path
         where to save correlation coefficient matrix on local machine
+    type_col : str, optional
+        name of column in `ref_metadata` that contains cell type labels.
+        Defaults to 'type_updated'.
     step : int, optional
 
     Returns
@@ -172,11 +171,10 @@ def centroid_mapping(
     type_assignment : pd.DataFrame
     """
     # add cell type column
-    ref_counts['type_updated'] = ref_metadata.loc[
-        ref_counts.index, 'type_updated']
+    ref_counts[type_col] = ref_metadata.loc[ref_counts.index, type_col]
 
     # build centroids table of mean for each variable gene within a cluster
-    ref_counts = ref_counts.groupby("type_updated").mean()  # cluster x gene
+    ref_counts = ref_counts.groupby(type_col).mean()  # cluster x gene
 
     # For each cell, calculate correlations across all genes for each centroid
     corr_scores = []
@@ -191,18 +189,19 @@ def centroid_mapping(
 
     # Assign clusters based on highest value concordance (excluding any NaNs)
     type_assignment = corr_scores.idxmax(axis='columns').to_frame(
-        name='celltype')
+        name=type_col)
     return corr_scores, type_assignment
 
 
 def calculate_embeddings(
-        ref_counts,
-        new_counts,
-        ref_umap,
-        umap_cols,
-        use_median: bool = True,
-        knn: int = 10,
-        step: int = 1_000
+        ref_counts: pd.DataFrame,
+        new_counts: pd.DataFrame,
+        ref_umap: pd.DataFrame,
+        umap_cols: list,
+        type_col: str,
+        use_median: bool,
+        knn: int,
+        step: int
 ):
     """
     Parameters
@@ -216,12 +215,15 @@ def calculate_embeddings(
         reference atlas
     umap_cols :
         umap coord column names in `ref_umap`
-    use_median : bool, optional
+    type_col : str
+        name of column in `ref_metadata` that contains cell type labels.
+    use_median : bool
         whether to calculate the median or a weighted average for the query
         embeddings
-    knn : int, optional
+    knn : int
         number of neighbors to consider when selecting median/weighted mean
-    step : int, optional
+    step : int
+        Number of cells to map per iteration
 
     Returns
     -------
@@ -249,7 +251,9 @@ def calculate_embeddings(
 
             # extract umap coordinates for selected reference cells
             coords = ref_umap.loc[row.index, umap_cols].to_numpy()
-            n_types = len(ref_umap.loc[row.index, "type_updated"].unique())
+
+            # count number of mapped types for reference cells
+            n_types = len(ref_umap.loc[row.index, type_col].unique())
 
             # take median/corr weighted average of reference UMAP coordinates
             coords = np.median(coords, axis=0) if use_median else np.average(
@@ -262,19 +266,22 @@ def calculate_embeddings(
     return assignment_positions
 
 
-def __main__(
-        ref_dir: Path,
-        new_dir: Path,
+def pipeline(
+        raw_counts_path: Path,
+        raw_genes_path: Path,
+        raw_metadata_path: Path,
+        query_dir: Path,
         out_dir: Path,
-        mod_path: Path = None,
-        umap_cols: tuple = ("umap_1", "umap_2"),
+        umap_cols: list,
         scale_factor: float = 10_000,
         norm_seq_depth: bool = True,
         use_median: bool = True,
         knn: int = 10,
+        type_col: str = 'type_updated',
         step: int = 1_000
 ):
     """"""
+
     """prepare reference dataset and output paths"""
     corr_dir = out_dir.joinpath("corr_scores")
     plot_dir = out_dir.joinpath("umap_plots")
@@ -286,24 +293,20 @@ def __main__(
     assignment_path = out_dir.joinpath("mapped_centroids.csv")
 
     # extract relevant genes and metadata from reference files
-    ref_variable_genes = pd.read_csv(
-        ref_dir.joinpath("ref_var_genes.csv"), usecols=['x'])['x']
-    ref_metadata = pd.read_csv(
-        ref_dir.joinpath("wang_metadata.csv"), index_col=0)
+    ref_variable_genes = pd.read_csv(raw_genes_path, usecols=['x'])['x']
+    ref_metadata = pd.read_csv(raw_metadata_path, index_col=0)
 
     # clean up cell ids to match those in raw data file
     ref_metadata.index = format_str_index(ref_metadata.index)
-    ref_metadata['dataset_id'] = "wang et al"
 
     # only load relevant genes from reference dataset
     print(f'\nReference dataset file available? {filtered_path.is_file()}')
     if not filtered_path.is_file():
         ref_data = []
-        ref_counts_path = ref_dir.joinpath("wang_ref.csv")
         counts = None
         start_time = time.time()
         for chunk in track(  # gene x cell matrix
-                pd.read_csv(ref_counts_path, index_col=0, chunksize=step),
+                pd.read_csv(raw_counts_path, index_col=0, chunksize=step),
                 description='    loading...', total=None):
             # clean cell ids, revert ref_data transformed with log1p
             chunk = np.expm1(chunk)
@@ -334,12 +337,12 @@ def __main__(
     print(f'\nreference cell count: {ref_data.shape[0]}')
     print(f'variable genes count: {ref_data.shape[1]}')
 
-    """run centroid_mapping, calculate_embeddings on each query dataset"""
+    '''------ iterate over query datasets ------'''
     assignments = []
     logging = {}
     for query_path in track(
-            list(new_dir.glob('[!.]*.csv')), description="mapping..."):
-        """Prepare query dataset"""
+            list(query_dir.glob('[!.]*.csv')), description="mapping..."):
+        '''------ normalize and filter query dataset ------'''
         query_data = normalize_counts(
             pd.read_csv(query_path, index_col=0),  # index is gene
             scalar=scale_factor, norm_seq_depth=norm_seq_depth,
@@ -350,7 +353,7 @@ def __main__(
         query_data = query_data.loc[:, gg]
         common_genes = common_genes.intersection(gg)
 
-        # map centroids
+        '''------ centroid mapping ------'''
         centroid_time = time.time()
         corr, cell_type = centroid_mapping(
             ref_counts=ref_data.loc[:, gg],
@@ -364,19 +367,16 @@ def __main__(
         corr[['dataset_id', 'cbc']] = corr.index.to_series().str.split(
             '_', n=1, expand=True)
 
-        # extract umap coordinates
+        '''------ embed in reference umap ------'''
         embedding_time = time.time()
         coords = calculate_embeddings(
-            ref_counts=ref_data.loc[:, gg],
-            new_counts=query_data,
-            ref_umap=ref_metadata,
-            umap_cols=umap_cols,
-            use_median=use_median,
-            knn=knn)
+            ref_counts=ref_data.loc[:, gg], new_counts=query_data,
+            ref_umap=ref_metadata, umap_cols=umap_cols, type_col=type_col,
+            use_median=use_median, knn=knn, step=step)
         embedding_time = time.time() - embedding_time
         assignments += [pd.concat([corr, cell_type, coords], axis=1)]
 
-        # look data from current loop
+        # log data from current loop
         logging[query_path.name] = (len(gg), centroid_time, embedding_time)
 
     # save list of common genes as csv
@@ -384,17 +384,16 @@ def __main__(
     common_genes.to_series().to_csv(total_gene_path, index=False, header=False)
 
     # print logged metadata
-    table = Table(title="Mapping Summary")
-    table.add_column("dataset", style="bold cyan")
-    table.add_column("n genes", style="magenta")
-    table.add_column("t_centroid sec", style="green")
-    table.add_column("t_embedding sec", style="green")
+    table = Table(title='Mapping Summary')
+    table.add_column('dataset', style='bold cyan')
+    table.add_column('n genes', style='magenta')
+    table.add_column('t map (sec)', style='green')
+    table.add_column('t embed (sec)', style='green')
     for d, (g, t_c, t_e) in logging.items():
-        table.add_row(d, str(g), f"{t_c:.2f}", f"{t_e:.2f}")
+        table.add_row(d, str(g), f'{t_c:.2f}', f'{t_e:.2f}')
 
     Console().print(table)
 
-    # cell id, high score dataset_id cbc celltype n_types umap_1 umap_2
     assignments = pd.concat(assignments)
     mapping = {  # desired label: [dataset_ids]
         'SADB-19 cell': ['s1', 's2', 's3', 's4', 's5'],
@@ -406,10 +405,10 @@ def __main__(
 
     assignments.to_csv(assignment_path)
 
-    # plot high score distribution and number of clusters per mapped cell
+    '''------ plot high score distribution ------'''
     sns.set_theme(style="ticks", rc={
         "axes.spines.right": False, "axes.spines.top": False})
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(6, 3))
     plt.xticks(rotation=45)
     sns.violinplot(
         data=assignments, x='dataset_id', y='high_score', hue='dataset_id',
@@ -418,7 +417,11 @@ def __main__(
         plot_dir.joinpath('peak correlations.png'), dpi=300,
         bbox_inches='tight')
     plt.close()
-    plt.figure(figsize=(12, 6))
+
+    '''------ plot mapped type distribution ------'''
+    print(f'average number of mapped types/dataset at knn: {knn}')
+    print(assignments[type_col, 'n_types'].groupby(type_col).mean())
+    plt.figure(figsize=(6, 3))
     plt.xticks(rotation=45)
     sns.violinplot(
         data=assignments, x='dataset_id', y='n_types', hue='dataset_id',
@@ -435,36 +438,26 @@ def __main__(
     print(f'Number of cells post-thresholding: {assignments.shape[0]}')
     print(f'Percentage: {100 * assignments.shape[0] / total_cells:.2f}%')
 
-    # plot cell types on umap
+    '''------ plot cell types on umap ------'''
     unique = ref_metadata['type_updated'].unique()
     hue_map = dict(zip(unique, sns.color_palette(n_colors=len(unique))))
     kwargs = {
         'legend': False, 'palette': hue_map, 'hue_order': unique, 's': 5,
         'marker': '.'}
-    mod_path = mod_path if mod_path.is_file() else None
-    mod_data = None if mod_path is None else pd.read_csv(mod_path, index_col=0)
     for dset in track(
             assignments['dataset_id'].unique(), description='plot...'):
         subdata = assignments[assignments['dataset_id'] == dset]
-        n_rows = 2 if mod_path is None else 3
+        n_cols = 2
         fig, axes = plt.subplots(
-            nrows=n_rows, sharex=True, sharey=True, figsize=(6, 6 * n_rows),
+            ncols=n_cols, sharex=True, sharey=True, figsize=(3 * n_cols, 3),
             constrained_layout=True)
         sns.scatterplot(
             data=ref_metadata, x=umap_cols[0], y=umap_cols[1],
-            hue='type_updated', ax=axes[0], **kwargs)
+            hue=type_col, ax=axes[0], **kwargs)
         sns.scatterplot(
-            data=subdata, x=umap_cols[0], y=umap_cols[1], hue='celltype',
+            data=subdata, x=umap_cols[0], y=umap_cols[1], hue=type_col,
             ax=axes[1], **kwargs)
         titles = ["reference", dset]
-        if mod_path is not None:
-            titles += ['predicted']
-            subdata.loc[subdata.index, list(umap_cols)] = mod_data.loc[
-                subdata.index, list(umap_cols)]
-            sns.scatterplot(
-                data=subdata, x=umap_cols[0], y=umap_cols[1], hue='celltype',
-                ax=axes[2], **kwargs)
-
         for ax, t in zip(axes, titles):
             ax.set_title(t)
 
@@ -475,9 +468,18 @@ def __main__(
 
 
 if __name__ == '__main__':
-    REF_DIR = Path("/data/scratch/ike/barcoded_tech_data")
-    __main__(
-        ref_dir=REF_DIR.joinpath("wang_ref_atlas"),
-        new_dir=REF_DIR.joinpath("sparse_matrices"),
-        out_dir=REF_DIR.joinpath("outputs"),
-        mod_path=REF_DIR.joinpath("predictions.csv"))
+    base_dir = Path("/data/scratch/ike/barcoded_tech_data")
+    ref_dir = base_dir.joinpath("wang_ref_atlas")
+    pipeline(
+        raw_counts_path=ref_dir.joinpath("wang_ref.csv"),
+        raw_genes_path=ref_dir.joinpath("ref_var_genes.csv"),
+        raw_metadata_path=ref_dir.joinpath("wang_metadata.csv"),
+        query_dir=base_dir.joinpath("sparse_matrices"),
+        out_dir=base_dir.joinpath("outputs"),
+        umap_cols=["umap_1", "umap_2"],
+        scale_factor=10_000,
+        norm_seq_depth=True,
+        use_median=True,
+        knn=10,
+        type_col='type_updated',
+        step=1_000)
