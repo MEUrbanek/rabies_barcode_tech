@@ -445,8 +445,8 @@ def pipeline(
     plt.close()
 
     '''------ plot mapped type distribution ------'''
-    print(f'average number of mapped types/dataset at knn: {knn}')
-    print(assignments[[type_col, 'n_types']].groupby(type_col).mean())
+    print(f'average number of mapped types/dataset at knn {knn}')
+    print(assignments[['dataset_id', 'n_types']].groupby('dataset_id').mean())
     plt.figure(figsize=(6, 3))
     plt.xticks(rotation=45)
     sns.violinplot(
