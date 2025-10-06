@@ -264,6 +264,7 @@ def __main__(
         ref_dir: Path,
         new_dir: Path,
         out_dir: Path,
+        mod_path: Path = None,
         umap_cols: tuple = ("umap_1", "umap_2"),
         scale_factor: float = 10_000,
         norm_seq_depth: bool = True,
@@ -361,10 +362,6 @@ def __main__(
         corr[['dataset_id', 'cbc']] = corr.index.to_series().str.split(
             '_', n=1, expand=True)
 
-        # add dataset id to cluster assignments
-        name = query_path.stem
-        corr['datasetid'] = name.split('_')[0] if '_' in name else name
-
         # extract umap coordinates
         embedding_time = time.time()
         coords = calculate_embeddings(
@@ -433,19 +430,30 @@ def __main__(
     kwargs = {
         'legend': False, 'palette': hue_map, 'hue_order': unique, 's': 5,
         'marker': '.'}
+    mod_data = None if mod_path is None else pd.read_csv(mod_path, index_col=0)
     for dset in track(
             assignments['dataset_id'].unique(), description='plot...'):
+        subdata = assignments[assignments['dataset_id'] == dset]
+        n_rows = 2 if mod_path is None else 3
         fig, axes = plt.subplots(
-            nrows=2, sharex=True, sharey=True, figsize=(6, 12),
+            nrows=n_rows, sharex=True, sharey=True, figsize=(6, 6 * n_rows),
             constrained_layout=True)
         sns.scatterplot(
             data=ref_metadata, x=umap_cols[0], y=umap_cols[1],
             hue='type_updated', ax=axes[0], **kwargs)
         sns.scatterplot(
-            data=assignments[assignments['dataset_id'] == dset],
-            x=umap_cols[0], y=umap_cols[1], hue='celltype', ax=axes[1],
-            **kwargs)
-        for ax, t in zip(axes, ("reference", dset)):
+            data=subdata, x=umap_cols[0], y=umap_cols[1], hue='celltype',
+            ax=axes[1], **kwargs)
+        titles = ["reference", dset]
+        if mod_path is not None:
+            titles += ['predicted']
+            subdata.loc[subdata.index, list(umap_cols)] = mod_data.loc[
+                subdata.index, list(umap_cols)]
+            sns.scatterplot(
+                data=subdata, x=umap_cols[0], y=umap_cols[1], hue='celltype',
+                ax=axes[2], **kwargs)
+
+        for ax, t in zip(axes, titles):
             ax.set_title(t)
 
         plt.savefig(
@@ -459,4 +467,5 @@ if __name__ == '__main__':
     __main__(
         ref_dir=REF_DIR.joinpath("wang_ref_atlas"),
         new_dir=REF_DIR.joinpath("sparse_matrices"),
-        out_dir=REF_DIR.joinpath("outputs"))
+        out_dir=REF_DIR.joinpath("outputs"),
+        mod_path=REF_DIR.joinpath("predictions.csv"))
