@@ -249,14 +249,16 @@ def calculate_embeddings(
 
             # extract umap coordinates for selected reference cells
             coords = ref_umap.loc[row.index, umap_cols].to_numpy()
+            n_types = len(ref_umap.loc[row.index, "type_updated"].unique())
 
             # take median/corr weighted average of reference UMAP coordinates
             coords = np.median(coords, axis=0) if use_median else np.average(
                 coords, axis=0, weights=row.to_numpy())
-            assignment_positions[new_cell_id] = coords
+            assignment_positions[new_cell_id] = [n_types] + coords.tolist()
 
     assignment_positions = pd.DataFrame.from_dict(
-        assignment_positions, orient="index", columns=list(umap_cols))
+        assignment_positions, orient="index",
+        columns=["n_types"] + list(umap_cols))
     return assignment_positions
 
 
@@ -392,7 +394,7 @@ def __main__(
 
     Console().print(table)
 
-    # index is cell id, cols high score, dataset_id, cbc, celltype, 2 umap
+    # cell id, high score dataset_id cbc celltype n_types umap_1 umap_2
     assignments = pd.concat(assignments)
     mapping = {  # desired label: [dataset_ids]
         'SADB-19 cell': ['s1', 's2', 's3', 's4', 's5'],
@@ -404,16 +406,25 @@ def __main__(
 
     assignments.to_csv(assignment_path)
 
-    # plot high score distribution
+    # plot high score distribution and number of clusters per mapped cell
     sns.set_theme(style="ticks", rc={
         "axes.spines.right": False, "axes.spines.top": False})
     plt.figure(figsize=(12, 6))
     plt.xticks(rotation=45)
     sns.violinplot(
         data=assignments, x='dataset_id', y='high_score', hue='dataset_id',
-        legend=False, alpha=0.5)  #palette=dataset_palette)
+        legend=False, alpha=0.5)
     plt.savefig(
         plot_dir.joinpath('peak correlations.png'), dpi=300,
+        bbox_inches='tight')
+    plt.close()
+    plt.figure(figsize=(12, 6))
+    plt.xticks(rotation=45)
+    sns.violinplot(
+        data=assignments, x='dataset_id', y='n_types', hue='dataset_id',
+        legend=False, alpha=0.5)
+    plt.savefig(
+        plot_dir.joinpath('mapped types.png'), dpi=300,
         bbox_inches='tight')
     plt.close()
 
@@ -430,6 +441,7 @@ def __main__(
     kwargs = {
         'legend': False, 'palette': hue_map, 'hue_order': unique, 's': 5,
         'marker': '.'}
+    mod_path = mod_path if mod_path.is_file() else None
     mod_data = None if mod_path is None else pd.read_csv(mod_path, index_col=0)
     for dset in track(
             assignments['dataset_id'].unique(), description='plot...'):
