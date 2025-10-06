@@ -144,8 +144,8 @@ def centroid_mapping(
         new_counts,
         ref_metadata,
         write_corr_scores_df: Path,
-        type_col: str = 'type_updated',
-        step: int = 1_000
+        type_col: str,
+        step: int
 ):
     """
     Parameters
@@ -160,9 +160,8 @@ def centroid_mapping(
         Metadata associated with cells in `ref_counts`.
     write_corr_scores_df : Path
         where to save correlation coefficient matrix on local machine
-    type_col : str, optional
+    type_col : str
         name of column in `ref_metadata` that contains cell type labels.
-        Defaults to 'type_updated'.
     step : int, optional
 
     Returns
@@ -384,9 +383,8 @@ def pipeline(
         '''------ centroid mapping ------'''
         centroid_time = time.time()
         corr, cell_type = centroid_mapping(
-            ref_counts=ref_data.loc[:, gg],
-            new_counts=query_data,
-            ref_metadata=ref_metadata,
+            ref_counts=ref_data.loc[:, gg], new_counts=query_data,
+            ref_metadata=ref_metadata, type_col=type_col, step=step,
             write_corr_scores_df=corr_dir.joinpath(query_path.name))
         centroid_time = time.time() - centroid_time
 
@@ -467,7 +465,7 @@ def pipeline(
     print(f'Percentage: {100 * assignments.shape[0] / total_cells:.2f}%')
 
     '''------ plot cell types on umap ------'''
-    unique = ref_metadata['type_updated'].unique()
+    unique = ref_metadata[type_col].unique()
     hue_map = dict(zip(unique, sns.color_palette(n_colors=len(unique))))
     kwargs = {
         'legend': False, 'palette': hue_map, 'hue_order': unique, 's': 5,
@@ -490,21 +488,21 @@ def pipeline(
             ax.set_title(t)
 
         plt.savefig(
-            plot_dir.joinpath(f"{dset} dataset.png"), dpi=300,
-            bbox_inches="tight")
+            plot_dir.joinpath(f'{dset} dataset.png'), dpi=300,
+            bbox_inches='tight')
         plt.close()
 
 
 if __name__ == '__main__':
-    base_dir = Path("/data/scratch/ike/barcoded_tech_data")
-    ref_dir = base_dir.joinpath("wang_ref_atlas")
+    base_dir = Path('/data/scratch/ike/barcoded_tech_data')
+    ref_dir = base_dir.joinpath('wang_ref_atlas')
     pipeline(
-        ref_counts_path=ref_dir.joinpath("wang_ref.csv"),
-        ref_genes_path=ref_dir.joinpath("ref_var_genes.csv"),
-        ref_metadata_path=ref_dir.joinpath("wang_metadata.csv"),
-        query_dir=base_dir.joinpath("sparse_matrices"),
-        out_dir=base_dir.joinpath("outputs"),
-        umap_cols=["umap_1", "umap_2"],
+        ref_counts_path=ref_dir.joinpath('wang_ref.csv'),
+        ref_genes_path=ref_dir.joinpath('ref_var_genes.cs'),
+        ref_metadata_path=ref_dir.joinpath('wang_metadata.csv'),
+        query_dir=base_dir.joinpath('sparse_matrices'),
+        out_dir=base_dir.joinpath('outputs'),
+        umap_cols=['umap_1', 'umap_2'],
         scale_factor=10_000,
         norm_seq_depth=True,
         use_median=True,
