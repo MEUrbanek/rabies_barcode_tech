@@ -497,15 +497,27 @@ if __name__ == '__main__':
     base_dir = Path('/data/scratch/ike/barcoded_tech_data')
     ref_dir = base_dir.joinpath('wang_ref_atlas')
     pipeline(
-        ref_counts_path=ref_dir.joinpath('wang_ref.csv'),
-        ref_genes_path=ref_dir.joinpath('ref_var_genes.csv'),
-        ref_metadata_path=ref_dir.joinpath('wang_metadata.csv'),
-        query_dir=base_dir.joinpath('sparse_matrices'),
-        out_dir=base_dir.joinpath('outputs'),
-        umap_cols=['umap_1', 'umap_2'],
+        # path to reference count matrix
+        ref_counts_path=ref_dir.joinpath("wang_ref.csv"),
+        # path to reference list of variable genes
+        ref_genes_path=ref_dir.joinpath("ref_var_genes.csv"),
+        # path to reference metadata file
+        ref_metadata_path=ref_dir.joinpath("wang_metadata.csv"),
+        # path to directory with query datasets to analyze
+        query_dir=base_dir.joinpath("sparse_matrices"),
+        # path to directory in which to save outputs
+        out_dir=base_dir.joinpath("outputs"),
+        # labels of umap coordinate columns
+        umap_cols=["umap_1", "umap_2"],
+        # scale factor with which to normalize count matrices
         scale_factor=10_000,
+        # whether to normalize count matrices or not
         norm_seq_depth=True,
+        # if True, compute embeddings via median
         use_median=True,
+        # number of neighbors to consider for embedding
         knn=10,
+        # label of cell type column
         type_col='type_updated',
+        # number of cells to load/analyze at a time
         step=1_000)
