@@ -498,7 +498,7 @@ if __name__ == '__main__':
     ref_dir = base_dir.joinpath('wang_ref_atlas')
     pipeline(
         ref_counts_path=ref_dir.joinpath('wang_ref.csv'),
-        ref_genes_path=ref_dir.joinpath('ref_var_genes.cs'),
+        ref_genes_path=ref_dir.joinpath('ref_var_genes.csv'),
         ref_metadata_path=ref_dir.joinpath('wang_metadata.csv'),
         query_dir=base_dir.joinpath('sparse_matrices'),
         out_dir=base_dir.joinpath('outputs'),
