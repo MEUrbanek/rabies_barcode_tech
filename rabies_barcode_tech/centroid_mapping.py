@@ -271,7 +271,7 @@ def __main__(
         scale_factor: float = 10_000,
         norm_seq_depth: bool = True,
         use_median: bool = True,
-        knn: int = 1,
+        knn: int = 10,
         step: int = 1_000
 ):
     """"""
