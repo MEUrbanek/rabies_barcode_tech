@@ -267,9 +267,9 @@ def calculate_embeddings(
 
 
 def pipeline(
-        raw_counts_path: Path,
-        raw_genes_path: Path,
-        raw_metadata_path: Path,
+        ref_counts_path: Path,
+        ref_genes_path: Path,
+        ref_metadata_path: Path,
         query_dir: Path,
         out_dir: Path,
         umap_cols: list,
@@ -280,9 +280,37 @@ def pipeline(
         type_col: str = 'type_updated',
         step: int = 1_000
 ):
-    """"""
+    """Centroid mapping pipeline
 
-    """prepare reference dataset and output paths"""
+    Parameters
+    ----------
+    ref_counts_path : Path
+        Path to reference count matrix.csv
+    ref_genes_path : Path
+        Path to reference list of variable genes.csv
+    ref_metadata_path : Path
+        Path to reference metadata.csv
+    query_dir : Path
+        Path to directory of query datasets.csv.
+    out_dir : Path
+        Path to save output files and plots.
+    umap_cols : list[str]
+        Names of columns in `ref_metadata_path` that contain umap coordinates.
+    scale_factor : float
+        Scale factor with which to adjust normalized counts.
+    norm_seq_depth : bool
+        Whether to normalize counts by depth and `scale_factor`.
+    use_median : bool
+        If True, compute query cell embeddings with median value. If False, use
+        weighted average.
+    knn : int
+        Number of nearest neighbors to consider when calculating query umap
+        embeddings.
+    type_col : str
+        Column name in `ref_metadata_path` that contains cell type labels.
+    step : int
+        Number of cells to load or map per iteration.
+    """
     corr_dir = out_dir.joinpath("corr_scores")
     plot_dir = out_dir.joinpath("umap_plots")
     for subdir in (corr_dir, plot_dir):
@@ -293,8 +321,8 @@ def pipeline(
     assignment_path = out_dir.joinpath("mapped_centroids.csv")
 
     # extract relevant genes and metadata from reference files
-    ref_variable_genes = pd.read_csv(raw_genes_path, usecols=['x'])['x']
-    ref_metadata = pd.read_csv(raw_metadata_path, index_col=0)
+    ref_variable_genes = pd.read_csv(ref_genes_path, usecols=['x'])['x']
+    ref_metadata = pd.read_csv(ref_metadata_path, index_col=0)
 
     # clean up cell ids to match those in raw data file
     ref_metadata.index = format_str_index(ref_metadata.index)
@@ -306,7 +334,7 @@ def pipeline(
         counts = None
         start_time = time.time()
         for chunk in track(  # gene x cell matrix
-                pd.read_csv(raw_counts_path, index_col=0, chunksize=step),
+                pd.read_csv(ref_counts_path, index_col=0, chunksize=step),
                 description='    loading...', total=None):
             # clean cell ids, revert ref_data transformed with log1p
             chunk = np.expm1(chunk)
@@ -420,7 +448,7 @@ def pipeline(
 
     '''------ plot mapped type distribution ------'''
     print(f'average number of mapped types/dataset at knn: {knn}')
-    print(assignments[type_col, 'n_types'].groupby(type_col).mean())
+    print(assignments[[type_col, 'n_types']].groupby(type_col).mean())
     plt.figure(figsize=(6, 3))
     plt.xticks(rotation=45)
     sns.violinplot(
@@ -471,9 +499,9 @@ if __name__ == '__main__':
     base_dir = Path("/data/scratch/ike/barcoded_tech_data")
     ref_dir = base_dir.joinpath("wang_ref_atlas")
     pipeline(
-        raw_counts_path=ref_dir.joinpath("wang_ref.csv"),
-        raw_genes_path=ref_dir.joinpath("ref_var_genes.csv"),
-        raw_metadata_path=ref_dir.joinpath("wang_metadata.csv"),
+        ref_counts_path=ref_dir.joinpath("wang_ref.csv"),
+        ref_genes_path=ref_dir.joinpath("ref_var_genes.csv"),
+        ref_metadata_path=ref_dir.joinpath("wang_metadata.csv"),
         query_dir=base_dir.joinpath("sparse_matrices"),
         out_dir=base_dir.joinpath("outputs"),
         umap_cols=["umap_1", "umap_2"],
