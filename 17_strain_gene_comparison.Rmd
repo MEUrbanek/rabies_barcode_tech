@@ -1,0 +1,1018 @@
+---
+title: '17_strain_gene_comparison'
+output: html_document
+date: "2025-10-13"
+---
+R markdown file for running gene enrichment analysis on CVS-N2c and SAD B19-infected cells. Input for this script requires:
+
+1) Sparse gene expression matrices for each sample
+2) Metadata table with cell type annotations and cell barcode for each sample
+
+Output for this script includes:
+
+1) UCell enrichment plots for pathways relating to inflammation
+2) Gene enrichment dot plots CVS-N2c vs. SAD B19 slices, both pooled and by cell type
+
+Package versions used for running this code are stored in the renv lockfile at https://github.com/MEUrbanek/rabies_barcode_tech.This lockfile does not contain development dependencies (i.e. devtools)!
+
+This code was last amended by Maddie Urbanek on 12/12/2025
+
+```{r setup}
+#Load in libraries
+library(devtools)
+library(BiocManager)
+library(Seurat)
+library(SeuratObject)
+library(dplyr)
+library(patchwork)
+library(tidyverse)
+library(ggplot2)
+library(sctransform)
+library(glmGamPoi)
+library(cowplot)
+library(DoubletFinder)
+library(schard)
+library(UCell)
+library(clusterProfiler)
+library(EnhancedVolcano)
+
+#Set working directory to where data is stored
+setwd('/Users/maddieurbanek/Desktop/revision_data/resubmission/data/transcriptome/')
+```
+
+```{r import datasets}
+#For strain comparison, we're using SAD B19 whole cell and CVS-N2c whole cell datasets
+#Import unnormalized, sparse matrices post filtering
+s1<-read.delim('./filtered_sparse_matrices/s1_sparse.csv', header=TRUE,sep=',')
+rownames(s1) <- s1[,1]
+s1 <- s1[,-1]
+s1<-CreateSeuratObject(counts=s1)
+s1<-NormalizeData(s1)
+
+s2<-read.delim('./filtered_sparse_matrices/s2_sparse.csv', header=TRUE,sep=',')
+rownames(s2) <- s2[,1]
+s2 <- s2[,-1]
+s2<-CreateSeuratObject(counts=s2)
+s2<-NormalizeData(s2)
+
+s3<-read.delim('./filtered_sparse_matrices/s3_sparse.csv', header=TRUE,sep=',')
+rownames(s3) <- s3[,1]
+s3 <- s3[,-1]
+s3<-CreateSeuratObject(counts=s3)
+s3<-NormalizeData(s3)
+
+s4<-read.delim('./filtered_sparse_matrices/s4_sparse.csv', header=TRUE,sep=',')
+rownames(s4) <- s4[,1]
+s4 <- s4[,-1]
+s4<-CreateSeuratObject(counts=s4)
+s4<-NormalizeData(s4)
+
+s5<-read.delim('./filtered_sparse_matrices/s5_sparse.csv', header=TRUE,sep=',')
+rownames(s5) <- s5[,1]
+s5 <- s5[,-1]
+s5<-CreateSeuratObject(counts=s5)
+s5<-NormalizeData(s5)
+
+c1<-read.delim('./filtered_sparse_matrices/c1_sparse.csv', header=TRUE,sep=',')
+rownames(c1) <- c1[,1]
+c1 <- c1[,-1]
+c1<-CreateSeuratObject(counts=c1)
+c1<-NormalizeData(c1)
+
+c2<-read.delim('./filtered_sparse_matrices/c2_sparse.csv', header=TRUE,sep=',')
+rownames(c2) <- c2[,1]
+c2 <- c2[,-1]
+c2<-CreateSeuratObject(counts=c2)
+c2<-NormalizeData(c2)
+
+c3<-read.delim('./filtered_sparse_matrices/c3_sparse.csv', header=TRUE,sep=',')
+rownames(c3) <- c3[,1]
+c3 <- c3[,-1]
+c3<-CreateSeuratObject(counts=c3)
+c3<-NormalizeData(c3)
+
+c4<-read.delim('./filtered_sparse_matrices/c4_sparse.csv', header=TRUE,sep=',')
+rownames(c4) <- c4[,1]
+c4 <- c4[,-1]
+c4<-CreateSeuratObject(counts=c4)
+c4<-NormalizeData(c4)
+```
+
+```{r merge}
+strain <- merge(s1, y = c(s2,s3,s4,s5,c1,c2,c3,c4),merge.data= TRUE)
+```
+
+```{r add metadata}
+filtered_metadata=read.csv('./filtered_metadata.csv')
+rownames(filtered_metadata) <- filtered_metadata[,1]
+filtered_metadata <- filtered_metadata[,-1]
+filtered_metadata
+
+strain<-AddMetaData(strain, filtered_metadata)
+
+strain<-SetIdent(strain,value=strain$subclass)
+strain=subset(x = strain, idents = c('EN-Immature','IPC','IN-MGE','Astrocyte','IN-DGE','Oligo','EN-L2_3-IT','EN-L4-IT','RG','IN-CGE','Cajal-Retzius cell','EN-Deep Layer'))
+```
+
+
+
+```{r process data for DEG analysis}
+strain<-JoinLayers(strain)
+
+strain[["percent.ribo"]] <- PercentageFeatureSet(strain, pattern = "^RP-")
+strain[["percent.mito"]] <- PercentageFeatureSet(strain, pattern = "^MT-")
+strain<-FindVariableFeatures(strain, selection.method = "vst", nfeatures = 3000)
+```
+
+
+
+```{r ucell analysis}
+library(UCell)
+inflammatory_modules <- list()
+inflammatory_modules$immune_response <- degs_gsea@geneSets$'GO:0006955'
+inflammatory_modules$inflammatory_response <- degs_gsea@geneSets$'GO:0006954'
+inflammatory_modules$defense_response <- degs_gsea@geneSets$'GO:0006952'   
+inflammatory_modules$positive_regulation_of_immune_system_process <- degs_gsea@geneSets$'GO:0002684'
+inflammatory_modules$glial_cell_activation <- degs_gsea@geneSets$'GO:0061900'   
+inflammatory_modules$autophagy <- degs_gsea@geneSets$'GO:0006914'
+
+inflammatory_modules$autophagy <- degs_gsea@geneSets$'GO:0016238'
+
+
+strain <- AddModuleScore_UCell(strain, features = inflammatory_modules,maxRank=2024)
+signature.names <- paste0(names(inflammatory_modules), "_UCell")
+
+#Manually set embeddings
+scores<-strain@meta.data
+
+#Autophagy
+minimum=min(strain$autophagy_UCell)
+maximum=max(strain$autophagy_UCell)
+scores =scores[(order(scores$autophagy_UCell)),]
+cvs_scores=scores[scores$viral_strain == 'CVS-N2c',]
+sad_scores=scores[scores$viral_strain == 'SADB19',]  
+image=ggplot(sad_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=autophagy_UCell)) + scale_colour_gradientn(colours = c('skyblue','white','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/sadb19_autophagy_UCell.pdf',plot = image,width=8,height=8,units='in')
+image=ggplot(cvs_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=inflammatory_response_UCell)) + scale_colour_gradientn(colours = c('skyblue','lightgrey','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/cvs_autophagy_UCell.pdf',plot = image,width=8,height=8,units='in')
+
+#inflammatory response
+minimum=min(strain$inflammatory_response_UCell)
+maximum=max(strain$inflammatory_response_UCell)
+scores =scores[(order(scores$inflammatory_response_UCell)),]
+cvs_scores=scores[scores$viral_strain == 'CVS-N2c',]
+sad_scores=scores[scores$viral_strain == 'SADB19',]  
+image=ggplot(sad_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=inflammatory_response_UCell)) + scale_colour_gradientn(colours = c('skyblue','lightgrey','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/sadb19_inflammatory_response_UCell.pdf',plot = image,width=8,height=8,units='in')
+image=ggplot(cvs_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=inflammatory_response_UCell)) + scale_colour_gradientn(colours = c('skyblue','lightgrey','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/cvs_inflammatory_response_UCell.pdf',plot = image,width=8,height=8,units='in')
+
+
+#immune_response
+minimum=min(strain$immune_response_UCell)
+maximum=max(strain$immune_response_UCell)
+scores =scores[(order(scores$immune_response_UCell)),]
+cvs_scores=scores[scores$viral_strain == 'CVS-N2c',]
+sad_scores=scores[scores$viral_strain == 'SADB19',]  
+image=ggplot(sad_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=immune_response_UCell)) + scale_colour_gradientn(colours = c('skyblue','lightgrey','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/sadb19_immune_response_UCell.pdf',plot = image,width=8,height=8,units='in')
+image=ggplot(cvs_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=immune_response_UCell)) + scale_colour_gradientn(colours = c('skyblue','lightgrey','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/cvs_immune_response_UCell.pdf',plot = image,width=8,height=8,units='in')
+
+
+#defense_response_UCell
+minimum=min(strain$defense_response_UCell)
+maximum=max(strain$defense_response_UCell)
+scores =scores[(order(scores$defense_response_UCell)),]
+cvs_scores=scores[scores$viral_strain == 'CVS-N2c',]
+sad_scores=scores[scores$viral_strain == 'SADB19',]  
+image=ggplot(sad_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=defense_response_UCell)) + scale_colour_gradientn(colours = c('skyblue','lightgrey','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/sadb19_defense_response_UCell.pdf',plot = image,width=8,height=8,units='in')
+image=ggplot(cvs_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=defense_response_UCell)) + scale_colour_gradientn(colours = c('skyblue','lightgrey','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/cvs_defense_response_UCell.pdf',plot = image,width=8,height=8,units='in')
+
+
+#glial_cell_activation_UCell
+minimum=min(strain$glial_cell_activation_UCell)
+maximum=max(strain$glial_cell_activation_UCell)
+scores =scores[(order(scores$glial_cell_activation_UCell)),]
+cvs_scores=scores[scores$viral_strain == 'CVS-N2c',]
+sad_scores=scores[scores$viral_strain == 'SADB19',]  
+image=ggplot(sad_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=glial_cell_activation_UCell)) + scale_colour_gradientn(colours = c('skyblue','lightgrey','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/sadb19_glial_cell_activation_UCell.pdf',plot = image,width=8,height=8,units='in')
+image=ggplot(cvs_scores, aes(x=umap_1, y=umap_2)) + geom_point(aes(colour=glial_cell_activation_UCell)) + scale_colour_gradientn(colours = c('skyblue','lightgrey','red'),limits=c(minimum,maximum))
+image
+ggsave('../../figs/sfig_strain/cvs_glial_cell_activation_UCell.pdf',plot = image,width=8,height=8,units='in')
+
+#Stats on score distributions
+#Separate datasets
+strains=c('s1','s2','s3','s4','s5')
+sad_only <- subset(strain, subset = dataset_id %in% strains)
+strains=c('c1','c2','c3','c4')
+cvs_only <- subset(strain, subset = dataset_id %in% strains)
+
+print('Inflammatory Response')
+sad_dist<- sad_only$inflammatory_response_UCell
+cvs_dist<- cvs_only$inflammatory_response_UCell
+wilcox.test(sad_dist, cvs_dist, alternative = "two.sided")
+
+print('Immune Response')
+sad_dist<- sad_only$immune_response_UCell
+cvs_dist<- cvs_only$immune_response_UCell
+wilcox.test(sad_dist, cvs_dist, alternative = "two.sided")
+
+print('Defense Response')
+sad_dist<- sad_only$defense_response_UCell
+cvs_dist<- cvs_only$defense_response_UCell
+wilcox.test(sad_dist, cvs_dist, alternative = "two.sided")
+
+print('Glial Activation')
+sad_dist<- sad_only$glial_cell_activation_UCell
+cvs_dist<- cvs_only$glial_cell_activation_UCell
+wilcox.test(sad_dist, cvs_dist, alternative = "two.sided")
+
+
+image=VlnPlot(strain, features = "immune_response_UCell", group.by = 'viral_strain', cols= c("#5b1a18","#fd6467"))
+image
+ggsave('../../figs/sfig_strain/immune_response.png',plot = image,width=8,height=8,units='in')
+
+image=VlnPlot(strain, features = "defense_response_UCell", group.by = 'viral_strain', cols= c("#5b1a18","#fd6467"))
+image
+ggsave('../../figs/sfig_strain/defense_response.png',plot = image,width=8,height=8,units='in')
+
+image=VlnPlot(strain, features = "glial_cell_activation_UCell", group.by = 'viral_strain', cols= c("#5b1a18","#fd6467"))
+image
+ggsave('../../figs/sfig_strain/glial_activation.png',plot = image,width=8,height=8,units='in')
+
+image=VlnPlot(strain, features = "inflammatory_response_UCell", group.by = 'viral_strain', cols= c("#5b1a18","#fd6467"))
+image
+ggsave('../../figs/sfig_strain/inflammatory_response.png',plot = image,width=8,height=8,units='in')
+```
+
+
+
+
+```{r enrichment}
+#Pooled
+strain<-SetIdent(strain,value=strain$viral_strain)
+strain_c_v_s = FindMarkers(strain, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(strain_c_v_s,'./strain_comparison/pooled_c_v_s.csv')
+
+subset_genes<-subset(strain_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > .1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/pooled_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(strain_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/pooled_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(strain_c_v_s,
+                lab =rownames(strain_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/pooled_volcano.svg',plot = image,width=8,height=6,units='in')
+
+
+
+#Astrocyte
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "Astrocyte")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/astrocyte_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/astro_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/astro_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/astrocyte_volcano.svg',plot = image,width=8,height=6,units='in')
+
+#Oligo
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "Oligo")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/oligo_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/oligo_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/oligo_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/oligo_volcano.svg',plot = image,width=8,height=6,units='in')
+
+#RG
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "RG")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/rg_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/rg_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/rg_sad.pdf',plot = image,width=8,height=8,units='in')
+
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/rg_volcano.svg',plot = image,width=8,height=6,units='in')
+
+#IPC
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "IPC")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/ipc_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/ipc_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/ipc_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/ipc_volcano.svg',plot = image,width=8,height=6,units='in')
+
+#Immature EN
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "EN-Immature")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/enimmature_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/enimmature_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/enimmature_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/immature_volcano.svg',plot = image,width=8,height=6,units='in')
+
+
+#L2/3
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "EN-L2_3-IT")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/l23_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/l23_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/l23_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/l23_volcano.svg',plot = image,width=8,height=6,units='in')
+
+
+#L4
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "EN-L4-IT")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/l4_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/l4_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/l4_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/l4_volcano.svg',plot = image,width=8,height=6,units='in')
+
+
+#Deep
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "EN-Deep Layer")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/deep_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/deep_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/deep_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/deep_volcano.svg',plot = image,width=8,height=6,units='in')
+
+
+#CR
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "Cajal-Retzius cell")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/cr_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/cr_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/cr_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/cr_volcano.svg',plot = image,width=8,height=6,units='in')
+
+
+
+#IN-CGE
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "IN-CGE")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/cge_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/cge_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/cge_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/cge_volcano.svg',plot = image,width=8,height=6,units='in')
+
+
+
+#IN-MGE
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "IN-MGE")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/mge_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/mge_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/mge_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/mge_volcano.svg',plot = image,width=8,height=6,units='in')
+
+
+
+#IN-dLGE
+strain<-SetIdent(strain,value=strain$subclass)
+
+temp=subset(x = strain, idents = "IN-DGE")
+temp<-SetIdent(temp,value=temp$viral_strain)
+temp_c_v_s = FindMarkers(temp, ident.1 = 'CVS-N2c', ident.2= 'SADB19', verbose = T)
+write.csv(temp_c_v_s,'./strain_comparison/lge_c_v_s.csv')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC > 0.1)
+gene_list=rownames(subset_genes)
+
+up_cvs <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_cvs, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/lge_cvs.pdf',plot = image,width=8,height=8,units='in')
+
+subset_genes<-subset(temp_c_v_s, abs(p_val_adj)<0.05)
+subset_genes<-subset(subset_genes, avg_log2FC < -0.1)
+gene_list=rownames(subset_genes)
+
+up_sad <- enrichGO(gene_list, 
+             ont ="BP", 
+             keyType = "SYMBOL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05,
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+          
+image=dotplot(up_sad, x='GeneRatio',color='p.adjust',showCategory=15)
+image
+ggsave('../../figs/sfig_strain/lge_sad.pdf',plot = image,width=8,height=8,units='in')
+
+image=EnhancedVolcano(temp_c_v_s,
+                lab =rownames(temp_c_v_s),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                pCutoff = 10e-2,
+                FCcutoff = 1,
+                cutoffLineType = 'twodash',
+                cutoffLineWidth = 0.8,
+                pointSize = 2.0,
+                labSize = 5.0,
+                colAlpha = 1
+                ,xlim = c(-13,17.5) #whatever seems appropriate
+)
+ggsave('../../figs/sfig_strain/lge_volcano.svg',plot = image,width=8,height=6,units='in')
+
+
+```
+
