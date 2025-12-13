@@ -7,3 +7,5 @@ Each script is numbered based on its relative location in the analysis workflow.
 Input and output files for each step of the pipeline are summarized below:
 
 ![alt text](https://github.com/MEUrbanek/rabies_barcode_tech/blob/main/pipeline_schematic.png)
+
+Python modules and versions used for all analyses excluding 13_empty_droplet_modeling.ipynb are listed in the "requirements.txt" file housed in this repository. For 13_empty_droplet_modeling.ipynb, python modules and versions are listed in "empty_droplet_modeling_requirements.txt". All R packages and their versions are listed in the "renv.lock" file.
