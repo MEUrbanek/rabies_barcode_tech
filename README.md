@@ -6,4 +6,4 @@ Each script is numbered based on its relative location in the analysis workflow.
 
 Input and output files for each step of the pipeline are summarized below:
 
-![alt text](http://url/to/img.png)
+![alt text](https://github.com/MEUrbanek/rabies_barcode_tech/blob/main/pipeline_schematic.png)
