@@ -16,14 +16,14 @@ Python modules and versions used for all analyses excluding 13_empty_droplet_mod
 
 Additional analyses run for the manuscript are summarized below:
 
-Bit-based barcode hamming distance:
+### Bit-based barcode hamming distance:
 ![alt text](https://github.com/MEUrbanek/rabies_barcode_tech/blob/main/images/20251231_bit.png)
 
-Modeling of empty droplets:
+### Modeling of empty droplets:
 ![alt text](https://github.com/MEUrbanek/rabies_barcode_tech/blob/main/images/20251231_droplet.png)
 
-SAD B19 vs. CVS-N2c strain toxicity:
+### SAD B19 vs. CVS-N2c strain toxicity:
 ![alt text](https://github.com/MEUrbanek/rabies_barcode_tech/blob/main/images/20251231_strain.png)
 
-Nuclear barcode capture:
+### Nuclear barcode capture:
 ![alt text](https://github.com/MEUrbanek/rabies_barcode_tech/blob/main/images/20251231_nuclear.png)
