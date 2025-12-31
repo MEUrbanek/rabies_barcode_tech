@@ -2,7 +2,7 @@
 
 This repository contains code used for "High-Complexity Barcoded Rabies Virus for Scalable Circuit Mapping Using Single-Cell and Single-Nucleus Sequencing" by Shin & Urbanek et al.
 
-Each script is numbered based on its relative location in the analysis workflow. The main pipeline is divided into a set of scripts for analysis the diversity of our barcoded rabies virus (RVdG) libraries (scripts 1-6), and another set for analyzing experimental RVdG data (scripts 7-16). Additionally, there are some extraneous scripts (script 5, 13, 17-21) which aren't part of the standard RVdG workflow, but were used for analyses included within the manuscript.
+Each script is numbered based on its relative location in the analysis workflow. The main pipeline is divided into a set of scripts for analysis the complexity of our barcoded rabies virus (RVdG) libraries (scripts 1-6), and another set for analyzing experimental RVdG data (scripts 7-16). Additionally, there are some extraneous scripts (script 5, 13, 17-21) which aren't part of the standard RVdG workflow, but were used for analyses included within the manuscript.
 
 ## Main pipeline
 
