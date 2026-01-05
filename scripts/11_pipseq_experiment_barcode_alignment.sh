@@ -26,9 +26,10 @@ PIPSEEKER=$2 #complete path to pipseeker software
 BARCODESTART=$3 #base pair number in sequence where the first barcode starts (for Pip-seq4, this should be set to 28)
 BOWTIEREFS=$4 #complete path to bowtie2 reference genomes made from bit lists
 BBMAP=$5 #path to bbmap scripts
+HELPERSEQUENCE=$6 #Sequence to parse for identifying helpers, for lenti used AGCCATCTGTTGTTT
 
 #Example use:
-#bash 11_pipseq_experiment_barcode_alignment.sh /Users/maddieurbanek/Desktop/test/ /Users/maddieurbanek/pipseeker/pipseeker 28 /Users/maddieurbanek/Desktop/Rabies/localanalysis/refgenomes/bits /Users/maddieurbanek/Desktop/Rabies/localanalysis/bbmap
+#bash 11_pipseq_experiment_barcode_alignment.sh /Users/maddieurbanek/Desktop/test/ /Users/maddieurbanek/pipseeker/pipseeker 28 /Users/maddieurbanek/Desktop/Rabies/localanalysis/refgenomes/bits /Users/maddieurbanek/Desktop/Rabies/localanalysis/bbmap AGCCATCTGTTGTTT
 
 #Switch into data directory containing randomer FASTQs
 cd $FASTQS
@@ -152,7 +153,7 @@ echo Done generating barcode count matrix!
 #Process helper counts
 echo Pulling helper transcripts
 bbduk.sh in=barcodes_R2.fq.gz out=temp.fq maq=20 int=f
-bbduk.sh in=temp.fq literal=AGCCATCTGTTGTTT k=12 skipr1 restrictright=125 hdist=1 out=helper.fq outm1=helper_R1.fq outm2=helper_R2.fq int=t
+bbduk.sh in=temp.fq literal=$HELPERSEQUENCE k=12 skipr1 restrictright=125 hdist=1 out=helper.fq outm1=helper_R1.fq outm2=helper_R2.fq int=t
 $BBMAP/reformat.sh in=helper_R2.fq out=helper_R2.sam int=f
 samtools sort helper_R2.sam -n -o helper_R2sorted.sam
 awk 'BEGIN {OFS="\t"}; {print $1,$11}' helper_R2sorted.sam  > helper.txt
