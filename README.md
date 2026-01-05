@@ -10,6 +10,8 @@ Input and output files for each step of the main pipeline are summarized below:
 
 ![alt text](https://github.com/MEUrbanek/rabies_barcode_tech/blob/main/images/20251217_schematic.png)
 
+Users should select the script 11 corresponding to the sequencing technology used (10X or Pip-seq), as Pip-seq datasets require additional formatting that is done at the start of the script. 
+
 Python modules and versions used for all analyses excluding 13_empty_droplet_modeling.ipynb are listed in the "requirements.txt" file housed in this repository. For 13_empty_droplet_modeling.ipynb, python modules and versions are listed in "empty_droplet_modeling_requirements.txt". All R packages and their versions are listed in the "renv.lock" file.
 
 ## Additional analyses
