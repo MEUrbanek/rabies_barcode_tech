@@ -5,8 +5,6 @@
 
 #Requires a python virtual environment with UMI_tools installed
 
-#Requires a compatible version of Pipseeker (should match whatever was used to align transcriptomes!)
-
 #Input files include:
 #   1) A pair of FASTQs corresponding to Read 1 and Read 2 of a sequenced RVdG barcode library from a transcriptome-paired experiment
 #   2) bowtie2-compatible reference genome with list of 500 possible sequences for each bit
