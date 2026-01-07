@@ -74,19 +74,6 @@ awk '!/\*/' full1.txt > full.txt
 #Sort by read ID
 sort -k2  full.txt > randomer_flat.txt
 
-#SHOULDN'T NEED ANY OF THE FOLLOWING FOR COLLAPSING
-#Input flat file into UMI_tools to count UMIs per unique barcode sequence with a hamming distance on UMIs set to 1
-#umi_tools count_tab --per-cell --edit-distance-threshold=1 -I randomer_flat.txt -S counts.tsv -L counts.log
-
-#Drop file suffix
-#tail -n +2 counts.tsv > completecounts.tsv
-
-#Add new header describing column outputs
-#awk '!/cell/' completecounts.tsv > tmpfile && mv tmpfile completecounts.tsv
-#{ printf 'CBC\tbarcode\tUMI_Count\n'; cat completecounts.tsv; } > counts.tsv
-
-#Send file to completecounts.tsv
-#mv counts.tsv randomer_completecounts.tsv
 
 #Remove intermediate files
 rm randomer.txt
