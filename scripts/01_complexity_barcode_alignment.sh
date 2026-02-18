@@ -26,10 +26,10 @@ BBMAP=$5 #path to bbmap scripts
 
 #Example use:
 #For single-end
-#bash diversity_barcode_alignment.sh /Users/maddieurbanek/Desktop/test/single n 36 /Users/maddieurbanek/Desktop/Rabies/localanalysis/refgenomes/bits /Users/maddieurbanek/Desktop/Rabies/localanalysis/bbmap
+#bash complexity_barcode_alignment.sh /Users/maddieurbanek/Desktop/test/single n 36 /Users/maddieurbanek/Desktop/Rabies/localanalysis/refgenomes/bits /Users/maddieurbanek/Desktop/Rabies/localanalysis/bbmap
 
 #For paired-end
-#bash diversity_barcode_alignment.sh /Users/maddieurbanek/Desktop/test/paired y 19 /Users/maddieurbanek/Desktop/Rabies/localanalysis/refgenomes/bits /Users/maddieurbanek/Desktop/Rabies/localanalysis/bbmap
+#bash complexity_barcode_alignment.sh /Users/maddieurbanek/Desktop/test/paired y 19 /Users/maddieurbanek/Desktop/Rabies/localanalysis/refgenomes/bits /Users/maddieurbanek/Desktop/Rabies/localanalysis/bbmap
 
 
 cd $FASTQS
@@ -96,8 +96,8 @@ if [ $PAIRED == y ]; then
   rm bit1sorted.sam
 
   echo Aligning second bit
-  BITSTART=$(($BARCODESTART + 21))
-  BITEND=$(($BARCODESTART + 40))
+  BITSTART=$(($BARCODESTART + 20))
+  BITEND=$(($BARCODESTART + 39))
   bbduk.sh in=temp.fq out=temp1.fq ftl=$BITSTART ftr=$BITEND
   bowtie2 -x $BOWTIEREFS/bit2r temp1.fq -N 1 -S bit2.sam
   samtools sort bit2.sam -n -o bit2sorted.sam
@@ -107,8 +107,8 @@ if [ $PAIRED == y ]; then
   rm bit2sorted.sam
   
   echo Aligning second bit
-  BITSTART=$(($BARCODESTART + 41))
-  BITEND=$(($BARCODESTART + 60))
+  BITSTART=$(($BARCODESTART + 40))
+  BITEND=$(($BARCODESTART + 59))
   bbduk.sh in=temp.fq out=temp1.fq ftl=$BITSTART ftr=$BITEND
   bowtie2 -x $BOWTIEREFS/bit1r temp1.fq -N 1 -S bit3.sam
   samtools sort bit3.sam -n -o bit3sorted.sam
