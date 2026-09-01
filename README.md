@@ -14,6 +14,8 @@ Users should select the script 11 corresponding to the sequencing technology use
 
 Python modules and versions used for all analyses excluding 13_empty_droplet_modeling.ipynb are listed in the "requirements.txt" file housed in this repository. For 13_empty_droplet_modeling.ipynb, python modules and versions are listed in "empty_droplet_modeling_requirements.txt". All R packages and their versions are listed in the "renv.lock" file.
 
+Expected installation and runtime of whole pipeline is a few hours on a standard laptop.
+
 ## Additional analyses
 
 Additional analyses run for the manuscript are summarized below:
